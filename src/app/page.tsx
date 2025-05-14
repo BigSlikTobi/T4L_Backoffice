@@ -36,7 +36,7 @@ export default function HomePage() {
     try {
       // Fetch table names from 'public' schema
       const { data: tableNamesData, error: tableNamesError } = await supabase
-        .rpc('get_public_tables'); // Using a simple RPC for table names initially
+        .rpc('get_public_tables'); 
 
       if (tableNamesError) throw tableNamesError;
       
@@ -45,13 +45,6 @@ export default function HomePage() {
       if (tableNamesData && Array.isArray(tableNamesData)) {
          fetchedTables = await Promise.all(
           tableNamesData.map(async (table: { table_name: string }) => {
-            // For each table, fetch its columns
-            // This is a simplified way; a more robust method would query information_schema.columns
-            // For now, we'll fetch one row to infer columns, or use a dedicated RPC if available.
-            // Let's assume a RPC function 'get_table_columns' that returns column names.
-            // If not, we'll fetch first row and get keys.
-            
-            // Attempt to get columns by fetching one row
             const { data: sampleRowData, error: sampleRowError } = await supabase
               .from(table.table_name)
               .select('*')
@@ -59,17 +52,13 @@ export default function HomePage() {
               .maybeSingle();
 
             let columns: string[] = [];
-            if (sampleRowError && sampleRowError.code !== 'PGRST116') { // PGRST116: "Searched for a single row, but 0 rows were found" (empty table)
+            if (sampleRowError && sampleRowError.code !== 'PGRST116') { 
               console.warn(`Could not fetch sample row for table ${table.table_name} to infer columns:`, sampleRowError.message);
             }
             
             if (sampleRowData) {
               columns = Object.keys(sampleRowData);
             } else {
-              // Fallback or if table is empty: try to get columns via another method if needed
-              // For now, if a table is empty and we can't infer columns, it might not be ideal.
-              // A better approach is to query information_schema.columns
-              // For simplicity in this step, we will try to query information_schema.columns
                 const { data: columnData, error: columnError } = await supabase
                 .rpc('get_table_columns_info', { p_table_name: table.table_name });
 
@@ -85,15 +74,35 @@ export default function HomePage() {
           })
         );
       }
-
-
       setTables(fetchedTables);
     } catch (error: any) {
-      console.error("Failed to fetch tables:", error);
+      console.error("Raw error caught in fetchTables:", error);
+      console.error("Type of error in fetchTables:", typeof error, "Is Error instance:", error instanceof Error);
+
+      let detailMessage = "An unknown error occurred.";
+      if (error && typeof error === 'object') {
+        if (error.message) {
+          detailMessage = String(error.message);
+          if (error.details) detailMessage += ` Details: ${error.details}`;
+          if (error.hint) detailMessage += ` Hint: ${error.hint}`;
+          if (error.code) detailMessage += ` Code: ${error.code}`;
+        } else {
+          try {
+            detailMessage = `Non-standard error object: ${JSON.stringify(error)}`;
+          } catch (e) {
+            detailMessage = "Received a non-standard error object that could not be stringified.";
+          }
+        }
+      } else if (error !== null && error !== undefined) {
+        detailMessage = String(error);
+      }
+      
+      console.error("Processed error details for fetchTables:", detailMessage);
+
       toast({
         variant: "destructive",
-        title: "Error",
-        description: `Could not load database tables: ${error.message}. Ensure 'get_public_tables' and 'get_table_columns_info' RPC functions exist or adjust schema fetching.`,
+        title: "Error Loading Database Tables",
+        description: `Failed to load tables: ${detailMessage}. Please ensure your Supabase RPC functions ('get_public_tables', 'get_table_columns_info') are correctly set up and check the browser console for more technical information.`,
       });
     } finally {
       setIsLoadingTables(false);
@@ -189,7 +198,7 @@ export default function HomePage() {
 
   // Update a record in Supabase
   const handleSaveRecord = async (updatedRecord: Record<string, any>) => {
-    if (!selectedTableName || !updatedRecord.id) { // Assuming 'id' is the primary key
+    if (!selectedTableName || !updatedRecord.id) { 
       toast({
         variant: "destructive",
         title: "Save Error",
@@ -199,14 +208,12 @@ export default function HomePage() {
     }
 
     try {
-      // Supabase update requires matching on a primary key or unique column.
-      // We assume 'id' is the primary key.
       const { data: savedRecord, error } = await supabase
         .from(selectedTableName)
         .update(updatedRecord)
-        .match({ id: updatedRecord.id }) // Ensure you match on the correct primary key
-        .select() // Select the updated record to get the latest state
-        .single(); // Assuming update affects a single record and returns it
+        .match({ id: updatedRecord.id }) 
+        .select() 
+        .single(); 
 
       if (error) throw error;
 
@@ -255,7 +262,7 @@ export default function HomePage() {
               <Terminal className="h-4 w-4" />
               <AlertTitle>Supabase Admin Lite</AlertTitle>
               <AlertDescription>
-                Loading tables... If this persists, ensure your Supabase connection is set up and RPC functions are available.
+                Loading tables... If this persists, ensure your Supabase connection is set up and RPC functions are available. Check console for errors.
               </AlertDescription>
             </Alert>
           )}
