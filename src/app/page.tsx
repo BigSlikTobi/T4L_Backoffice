@@ -1,3 +1,4 @@
+
 "use client";
 
 import * as React from 'react';
@@ -5,7 +6,8 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { AppHeader } from '@/components/app-header';
 import { DataDisplayTable } from '@/components/data-display-table';
 import { RecordEditor } from '@/components/record-editor';
-import { fetchTables, fetchTableData, updateTableRecord, type TableSchema } from '@/data/mock-data';
+import { supabase } from '@/lib/supabaseClient'; // Import Supabase client
+import type { TableSchema } from '@/data/mock-data'; // Keep TableSchema interface
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -28,56 +30,150 @@ export default function HomePage() {
 
   const { toast } = useToast();
 
-  React.useEffect(() => {
-    const loadTables = async () => {
-      try {
-        setIsLoadingTables(true);
-        const fetchedTables = await fetchTables();
-        setTables(fetchedTables);
-        if (fetchedTables.length > 0) {
-          // Optionally select the first table by default
-          // handleSelectTable(fetchedTables[0].name); 
-        }
-      } catch (error) {
-        console.error("Failed to fetch tables:", error);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Could not load database tables.",
-        });
-      } finally {
-        setIsLoadingTables(false);
+  // Fetch table schemas from Supabase
+  const fetchTables = React.useCallback(async () => {
+    setIsLoadingTables(true);
+    try {
+      // Fetch table names from 'public' schema
+      const { data: tableNamesData, error: tableNamesError } = await supabase
+        .rpc('get_public_tables'); // Using a simple RPC for table names initially
+
+      if (tableNamesError) throw tableNamesError;
+      
+      let fetchedTables: TableSchema[] = [];
+
+      if (tableNamesData && Array.isArray(tableNamesData)) {
+         fetchedTables = await Promise.all(
+          tableNamesData.map(async (table: { table_name: string }) => {
+            // For each table, fetch its columns
+            // This is a simplified way; a more robust method would query information_schema.columns
+            // For now, we'll fetch one row to infer columns, or use a dedicated RPC if available.
+            // Let's assume a RPC function 'get_table_columns' that returns column names.
+            // If not, we'll fetch first row and get keys.
+            
+            // Attempt to get columns by fetching one row
+            const { data: sampleRowData, error: sampleRowError } = await supabase
+              .from(table.table_name)
+              .select('*')
+              .limit(1)
+              .maybeSingle();
+
+            let columns: string[] = [];
+            if (sampleRowError && sampleRowError.code !== 'PGRST116') { // PGRST116: "Searched for a single row, but 0 rows were found" (empty table)
+              console.warn(`Could not fetch sample row for table ${table.table_name} to infer columns:`, sampleRowError.message);
+            }
+            
+            if (sampleRowData) {
+              columns = Object.keys(sampleRowData);
+            } else {
+              // Fallback or if table is empty: try to get columns via another method if needed
+              // For now, if a table is empty and we can't infer columns, it might not be ideal.
+              // A better approach is to query information_schema.columns
+              // For simplicity in this step, we will try to query information_schema.columns
+                const { data: columnData, error: columnError } = await supabase
+                .rpc('get_table_columns_info', { p_table_name: table.table_name });
+
+                if (columnError) {
+                    console.warn(`Could not fetch column info for table ${table.table_name}:`, columnError.message);
+                    columns = ['id']; // Default or placeholder
+                } else if (columnData) {
+                    columns = columnData.map((col: { column_name: string }) => col.column_name);
+                }
+            }
+            
+            return { name: table.table_name, columns };
+          })
+        );
       }
-    };
-    loadTables();
+
+
+      setTables(fetchedTables);
+    } catch (error: any) {
+      console.error("Failed to fetch tables:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: `Could not load database tables: ${error.message}. Ensure 'get_public_tables' and 'get_table_columns_info' RPC functions exist or adjust schema fetching.`,
+      });
+    } finally {
+      setIsLoadingTables(false);
+    }
   }, [toast]);
+
+
+  React.useEffect(() => {
+    // Create RPC functions in Supabase SQL editor if they don't exist:
+    /*
+    -- Function to get table names from public schema
+    CREATE OR REPLACE FUNCTION get_public_tables()
+    RETURNS TABLE(table_name TEXT) AS $$
+    BEGIN
+        RETURN QUERY
+        SELECT c.relname::text FROM pg_catalog.pg_class c
+        LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' -- 'r' for ordinary table
+          AND n.nspname = 'public' -- Only from public schema
+          AND c.relname NOT LIKE 'pg_%' AND c.relname NOT LIKE 'sql_%' -- Exclude system tables
+        ORDER BY c.relname;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    -- Function to get column names for a specific table
+    CREATE OR REPLACE FUNCTION get_table_columns_info(p_table_name TEXT)
+    RETURNS TABLE(column_name TEXT, data_type TEXT, ordinal_position INTEGER) AS $$
+    BEGIN
+        RETURN QUERY
+        SELECT
+            isc.column_name::text,
+            isc.data_type::text,
+            isc.ordinal_position::integer
+        FROM information_schema.columns isc
+        WHERE isc.table_schema = 'public'
+          AND isc.table_name = p_table_name
+        ORDER BY isc.ordinal_position;
+    END;
+    $$ LANGUAGE plpgsql;
+    */
+    fetchTables();
+  }, [fetchTables]);
+
+  // Fetch data for the selected table
+  const fetchTableData = React.useCallback(async (tableName: string) => {
+    const { data, error } = await supabase.from(tableName).select('*');
+    if (error) {
+      console.error(`Failed to fetch data for table ${tableName}:`, error);
+      setDataError(`Could not load data for table ${tableName}: ${error.message}`);
+      toast({
+        variant: "destructive",
+        title: "Error Loading Data",
+        description: `Failed to load data for table '${tableName}': ${error.message}`,
+      });
+      throw error;
+    }
+    return data || [];
+  }, [toast]);
+
 
   const handleSelectTable = React.useCallback(async (tableName: string) => {
     setSelectedTableName(tableName);
     const schema = tables.find(t => t.name === tableName) || null;
     setCurrentTableSchema(schema);
-    setTableData(null); // Clear previous data
+    setTableData(null); 
     setDataError(null);
     setIsLoadingData(true);
     try {
       const data = await fetchTableData(tableName);
       setTableData(data);
     } catch (error) {
-      console.error(`Failed to fetch data for table ${tableName}:`, error);
-      setDataError(`Could not load data for table ${tableName}.`);
-      toast({
-        variant: "destructive",
-        title: "Error Loading Data",
-        description: `Failed to load data for table '${tableName}'.`,
-      });
+      // Error is already handled in fetchTableData by setting dataError and toasting
     } finally {
       setIsLoadingData(false);
     }
-  }, [tables, toast]);
+  }, [tables, toast, fetchTableData]);
 
   const handleOpenEditor = (record: Record<string, any>) => {
     setSelectedRecord(record);
-    setEditingRecord({ ...record }); // Create a copy for editing
+    setEditingRecord({ ...record }); 
     setIsEditorOpen(true);
   };
 
@@ -91,28 +187,50 @@ export default function HomePage() {
     setEditingRecord(prev => prev ? { ...prev, [fieldName]: value } : null);
   };
 
+  // Update a record in Supabase
   const handleSaveRecord = async (updatedRecord: Record<string, any>) => {
-    if (!selectedTableName) return;
-    try {
-      const savedRecord = await updateTableRecord(selectedTableName, updatedRecord);
-      // Update local table data
-      setTableData(prevData => 
-        prevData 
-          ? prevData.map(r => r.id === savedRecord.id ? savedRecord : r) 
-          : null
-      );
+    if (!selectedTableName || !updatedRecord.id) { // Assuming 'id' is the primary key
       toast({
-        title: "Success!",
-        description: `Record (ID: ${savedRecord.id}) in '${selectedTableName}' updated successfully.`,
-        className: "bg-accent text-accent-foreground"
+        variant: "destructive",
+        title: "Save Error",
+        description: "Table name or record ID is missing.",
       });
-      handleCloseEditor();
-    } catch (error) {
+      return;
+    }
+
+    try {
+      // Supabase update requires matching on a primary key or unique column.
+      // We assume 'id' is the primary key.
+      const { data: savedRecord, error } = await supabase
+        .from(selectedTableName)
+        .update(updatedRecord)
+        .match({ id: updatedRecord.id }) // Ensure you match on the correct primary key
+        .select() // Select the updated record to get the latest state
+        .single(); // Assuming update affects a single record and returns it
+
+      if (error) throw error;
+
+      if (savedRecord) {
+        setTableData(prevData => 
+          prevData 
+            ? prevData.map(r => r.id === savedRecord.id ? savedRecord : r) 
+            : null
+        );
+        toast({
+          title: "Success!",
+          description: `Record (ID: ${savedRecord.id}) in '${selectedTableName}' updated successfully.`,
+          className: "bg-accent text-accent-foreground"
+        });
+        handleCloseEditor();
+      } else {
+         throw new Error("Record not found after update or update returned no data.");
+      }
+    } catch (error: any) {
       console.error("Failed to save record:", error);
       toast({
         variant: "destructive",
         title: "Save Failed",
-        description: "Could not save changes to the record.",
+        description: `Could not save changes: ${error.message}`,
       });
     }
   };
@@ -132,7 +250,16 @@ export default function HomePage() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <AppHeader selectedTableName={selectedTableName} />
         <main className="flex-1 overflow-x-auto overflow-y-auto p-6 space-y-6">
-          {!selectedTableName && !isLoadingTables && (
+          {!selectedTableName && !isLoadingTables && tables.length === 0 && !dataError && (
+             <Alert className="max-w-2xl mx-auto">
+              <Terminal className="h-4 w-4" />
+              <AlertTitle>Supabase Admin Lite</AlertTitle>
+              <AlertDescription>
+                Loading tables... If this persists, ensure your Supabase connection is set up and RPC functions are available.
+              </AlertDescription>
+            </Alert>
+          )}
+          {!selectedTableName && !isLoadingTables && tables.length > 0 && (
             <Alert className="max-w-2xl mx-auto">
               <Terminal className="h-4 w-4" />
               <AlertTitle>Welcome to Supabase Admin Lite!</AlertTitle>
