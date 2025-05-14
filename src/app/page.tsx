@@ -81,28 +81,42 @@ export default function HomePage() {
 
       let detailMessage = "An unknown error occurred.";
       if (error && typeof error === 'object') {
-        if (error.message) {
+        // Prefer error.message if it's non-empty
+        if (error.message && String(error.message).trim() !== "") {
           detailMessage = String(error.message);
-          if (error.details) detailMessage += ` Details: ${error.details}`;
-          if (error.hint) detailMessage += ` Hint: ${error.hint}`;
-          if (error.code) detailMessage += ` Code: ${error.code}`;
+          if (error.details) detailMessage += ` Details: ${String(error.details)}`;
+          if (error.hint) detailMessage += ` Hint: ${String(error.hint)}`;
+          if (error.code) detailMessage += ` Code: ${String(error.code)}`;
         } else {
+          // Fallback if error.message is empty or not present
+          let stringifiedError: string | null = null;
           try {
-            detailMessage = `Non-standard error object: ${JSON.stringify(error)}`;
+            stringifiedError = JSON.stringify(error);
           } catch (e) {
-            detailMessage = "Received a non-standard error object that could not be stringified.";
+            // JSON.stringify might fail for circular objects, etc.
+          }
+
+          if (stringifiedError && stringifiedError !== '{}') {
+            detailMessage = `Error details: ${stringifiedError}.`;
+          } else {
+            const keys = Object.keys(error);
+            if (keys.length > 0) {
+              detailMessage = `Received error object with keys: [${keys.join(', ')}]. Values might be empty or non-stringifiable. Check browser console for the full object.`;
+            } else {
+              detailMessage = "Received an empty or uninformative error object. This often indicates an issue with the 'get_public_tables' RPC function (e.g., it doesn't exist, has permission issues, or an internal error) or a network problem. Please verify the RPC function in your Supabase dashboard and check the browser's network tab for the exact response from the server.";
+            }
           }
         }
       } else if (error !== null && error !== undefined) {
         detailMessage = String(error);
       }
       
-      console.error("Processed error details for fetchTables:", detailMessage);
+      console.error("Processed error details for fetchTables toast:", detailMessage);
 
       toast({
         variant: "destructive",
         title: "Error Loading Database Tables",
-        description: `Failed to load tables: ${detailMessage}. Please ensure your Supabase RPC functions ('get_public_tables', 'get_table_columns_info') are correctly set up and check the browser console for more technical information.`,
+        description: `Failed to load tables: ${detailMessage} Please ensure your Supabase RPC functions ('get_public_tables', 'get_table_columns_info') are correctly set up and check the browser console and network tab for more technical information.`,
       });
     } finally {
       setIsLoadingTables(false);
