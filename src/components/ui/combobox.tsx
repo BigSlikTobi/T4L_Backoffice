@@ -58,7 +58,6 @@ export function Combobox({
     if (allowNull) {
       const hasNullOption = options.some(opt => opt.value === "NULL_VALUE_PLACEHOLDER" || opt.value === null);
       if (!hasNullOption) {
-        // Use a unique string placeholder for the null option's value if actual null is problematic for cmdk keying
         return [{ value: "NULL_VALUE_PLACEHOLDER", label: nullLabel }, ...options];
       }
     }
@@ -66,15 +65,35 @@ export function Combobox({
   }, [options, allowNull, nullLabel]);
 
   const selectedOption = allOptions.find((option) => {
-    // Handles actual null or the placeholder for null
     if (value === null || value === "NULL_VALUE_PLACEHOLDER") {
       return option.value === "NULL_VALUE_PLACEHOLDER";
     }
-    // Compare potentially different types (e.g. number from state, string from option value if all are stringified)
-    // It's safer if option.value and `value` prop are of consistent types.
-    // For now, assume they might match or try string comparison if one is string and other is not.
     return String(option.value) === String(value);
   });
+
+  const handleValueChange = (selectedValueString: string) => {
+    console.log(`[Combobox] Command onValueChange triggered. selectedValueString: ${selectedValueString}`);
+    
+    const newSelectedOption = allOptions.find(
+      (opt) => String(opt.value) === selectedValueString
+    );
+
+    if (newSelectedOption) {
+      console.log(`[Combobox] newSelectedOption found: { value: ${newSelectedOption.value}, label: "${newSelectedOption.label}" }`);
+      if (newSelectedOption.value === "NULL_VALUE_PLACEHOLDER") {
+        onChange(null);
+        console.log(`[Combobox] Calling onChange with null`);
+      } else {
+        onChange(newSelectedOption.value);
+        console.log(`[Combobox] Calling onChange with value: ${newSelectedOption.value}`);
+      }
+    } else {
+      console.warn(`[Combobox] newSelectedOption not found for selectedValueString: ${selectedValueString}`);
+      // Fallback or error, perhaps call onChange with null or current value
+      onChange(null); // Or perhaps don't change if not found
+    }
+    setOpen(false);
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -93,7 +112,7 @@ export function Combobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className={cn("w-[--radix-popover-trigger-width] p-0", contentClassName)}>
-        <Command>
+        <Command onValueChange={handleValueChange}>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
@@ -101,25 +120,8 @@ export function Combobox({
               {allOptions.map((option) => (
                 <CommandItem
                   key={String(option.value) === "NULL_VALUE_PLACEHOLDER" ? "null-option-key" : String(option.value)}
-                  value={String(option.value)} // Use the actual value (as string) for cmdk
-                  onSelect={(selectedValueString) => {
-                    const newSelectedOption = allOptions.find(
-                      (opt) => String(opt.value) === selectedValueString
-                    );
-
-                    if (newSelectedOption) {
-                      if (newSelectedOption.value === "NULL_VALUE_PLACEHOLDER") {
-                        onChange(null);
-                      } else {
-                        // Pass the original option.value (could be number or string)
-                        onChange(newSelectedOption.value);
-                      }
-                    } else {
-                       // Should not happen if selectedValueString comes from an existing option
-                      onChange(null);
-                    }
-                    setOpen(false);
-                  }}
+                  value={String(option.value)} // This value is passed to Command's onValueChange
+                  // onSelect prop removed from CommandItem
                 >
                   <Check
                     className={cn(
