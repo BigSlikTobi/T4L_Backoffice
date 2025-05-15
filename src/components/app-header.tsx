@@ -1,18 +1,20 @@
+
 "use client";
 
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
-import { UserCircle } from 'lucide-react';
+import { UserCircle, PlusCircle } from 'lucide-react';
 
 interface AppHeaderProps {
   selectedTableName: string | null;
+  onAddNewRecord: () => void;
 }
 
-export function AppHeader({ selectedTableName }: AppHeaderProps) {
+export function AppHeader({ selectedTableName, onAddNewRecord }: AppHeaderProps) {
   return (
     <header className="flex h-16 items-center justify-between border-b bg-card px-6 shrink-0">
       <div className="flex items-center gap-4">
-        <SidebarTrigger className="md:hidden" /> {/* Hidden on desktop by default due to collapsible="icon" behaviour */}
+        <SidebarTrigger className="md:hidden" /> 
         <h1 className="text-xl font-semibold text-foreground truncate max-w-xs sm:max-w-md md:max-w-lg">
           {selectedTableName ? (
             <>
@@ -23,7 +25,17 @@ export function AppHeader({ selectedTableName }: AppHeaderProps) {
           : "Supabase Admin Lite"}
         </h1>
       </div>
-      <div>
+      <div className="flex items-center gap-2">
+        {selectedTableName && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onAddNewRecord}
+          >
+            <PlusCircle className="mr-2 h-4 w-4" />
+            New Record
+          </Button>
+        )}
         <Button variant="ghost" size="icon" disabled>
           <UserCircle className="h-5 w-5" />
           <span className="sr-only">User Profile</span>

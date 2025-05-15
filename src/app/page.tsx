@@ -6,8 +6,8 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { AppHeader } from '@/components/app-header';
 import { DataDisplayTable } from '@/components/data-display-table';
 import { RecordEditor } from '@/components/record-editor';
-import { supabase } from '@/lib/supabaseClient'; // Import Supabase client
-import type { TableSchema } from '@/data/mock-data'; // Keep TableSchema interface
+import { supabase } from '@/lib/supabaseClient'; 
+import type { TableSchema } from '@/data/mock-data'; 
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -27,14 +27,13 @@ export default function HomePage() {
   const [selectedRecord, setSelectedRecord] = React.useState<Record<string, any> | null>(null);
   const [editingRecord, setEditingRecord] = React.useState<Record<string, any> | null>(null);
   const [isEditorOpen, setIsEditorOpen] = React.useState(false);
+  const [isCreatingNewRecord, setIsCreatingNewRecord] = React.useState(false);
 
   const { toast } = useToast();
 
-  // Fetch table schemas from Supabase
   const fetchTables = React.useCallback(async () => {
     setIsLoadingTables(true);
     try {
-      // Fetch table names from 'public' schema
       const { data: tableNamesData, error: tableNamesError } = await supabase
         .rpc('get_public_tables'); 
 
@@ -42,7 +41,7 @@ export default function HomePage() {
         if (typeof tableNamesError === 'object' && tableNamesError !== null && !tableNamesError.message && Object.keys(tableNamesError).length === 0) {
           throw new Error("Failed to fetch table names using 'get_public_tables' RPC. Supabase returned an empty error object. Please check the RPC function's definition, permissions in your Supabase dashboard, and the browser's network tab for server response details.");
         }
-        throw tableNamesError; // Re-throw original error if it's not an empty object
+        throw tableNamesError; 
       }
       
       let fetchedTables: TableSchema[] = [];
@@ -60,18 +59,12 @@ export default function HomePage() {
 
             if (sampleRowError) {
               if (sampleRowError.code === 'PGRST116') {
-                // This is expected for empty tables, log for info and proceed.
                 console.info(`Table '${table.table_name}' is empty (PGRST116), attempting to get columns via RPC.`);
               } else if (typeof sampleRowError === 'object' && sampleRowError !== null && !sampleRowError.message && Object.keys(sampleRowError).length === 0) {
-                // Empty error object from sample row fetch - this is problematic.
-                // Throw a specific error to be caught by Promise.all and then the main catch.
                 throw new Error(`Failed to fetch a sample row for table '${table.table_name}' to infer schema. Supabase returned an empty error object. Check table permissions and network logs.`);
               } else {
-                // Some other error fetching sample row.
                 const sampleErrorMsg = sampleRowError.message || JSON.stringify(sampleRowError);
                 console.warn(`Could not fetch sample row for table ${table.table_name} (code: ${sampleRowError.code}): ${sampleErrorMsg}. Will attempt fallback to RPC for columns.`);
-                // We allow fallback, but if this error was the one to propagate as {}, it would be an issue.
-                // By throwing on *empty object* above, we cover that.
               }
             }
             
@@ -107,7 +100,7 @@ export default function HomePage() {
       }
       setTables(fetchedTables.filter(t => t && t.columns && t.columns.length > 0));
     } catch (error: any) {
-      console.error("Raw error caught in fetchTables:", error); // Line 101
+      console.error("Raw error caught in fetchTables:", error); 
       console.error("Type of error in fetchTables:", typeof error, "Is Error instance:", error instanceof Error);
 
       let detailMessage = "An unknown error occurred while fetching table schemas.";
@@ -201,7 +194,27 @@ export default function HomePage() {
 
   const handleOpenEditor = (record: Record<string, any>) => {
     setSelectedRecord(record);
-    setEditingRecord({ ...record }); 
+    setEditingRecord({ ...record });
+    setIsCreatingNewRecord(false);
+    setIsEditorOpen(true);
+  };
+  
+  const handleOpenNewRecordEditor = () => {
+    if (!currentTableSchema) return;
+
+    const newRecordScaffold = currentTableSchema.columns.reduce((acc, colName) => {
+      const colLower = colName.toLowerCase();
+      if (colLower === 'id' || colLower.endsWith('_at')) {
+        // Don't pre-fill 'id' or common timestamp fields for new records
+        return acc;
+      }
+      acc[colName] = ''; // Default to empty string, editor can handle type hints
+      return acc;
+    }, {} as Record<string, any>);
+    
+    setSelectedRecord(null);
+    setEditingRecord(newRecordScaffold);
+    setIsCreatingNewRecord(true);
     setIsEditorOpen(true);
   };
 
@@ -209,53 +222,113 @@ export default function HomePage() {
     setIsEditorOpen(false);
     setSelectedRecord(null);
     setEditingRecord(null);
+    setIsCreatingNewRecord(false);
   };
 
   const handleFieldChangeInEditor = (fieldName: string, value: any) => {
     setEditingRecord(prev => prev ? { ...prev, [fieldName]: value } : null);
   };
 
-  const handleSaveRecord = async (updatedRecord: Record<string, any>) => {
-    if (!selectedTableName || !updatedRecord.id) { 
+  const handleSaveRecord = async (recordToSave: Record<string, any>) => {
+    if (!selectedTableName || !currentTableSchema) { 
       toast({
         variant: "destructive",
         title: "Save Error",
-        description: "Table name or record ID is missing.",
+        description: "Table name or schema is missing.",
       });
       return;
     }
 
+    const payloadForSupabase: Record<string, any> = {};
+    currentTableSchema.columns.forEach(colName => {
+      // Include column in payload if it's present in recordToSave
+      // Exclude 'id' for new records, as it's auto-generated
+      if (Object.prototype.hasOwnProperty.call(recordToSave, colName)) {
+        if (isCreatingNewRecord && colName.toLowerCase() === 'id') {
+          return; 
+        }
+        payloadForSupabase[colName] = recordToSave[colName];
+      } else if (isCreatingNewRecord && colName.toLowerCase() !== 'id' && !colName.toLowerCase().endsWith('_at')) {
+        // For new records, if a field wasn't touched but is part of schema (and not id/timestamp),
+        // it might need to be null or a default. For now, we only send what's in recordToSave.
+        // Supabase might enforce NOT NULL constraints. This can be refined.
+      }
+    });
+    
+    // Clean up undefined values, convert empty strings to null for Supabase if desired
+    for (const key in payloadForSupabase) {
+      if (payloadForSupabase[key] === undefined) {
+        delete payloadForSupabase[key];
+      } else if (payloadForSupabase[key] === '') {
+        // Consider if empty strings should be sent as null
+        // payloadForSupabase[key] = null; 
+      }
+    }
+
     try {
-      const { data: savedRecord, error } = await supabase
-        .from(selectedTableName)
-        .update(updatedRecord)
-        .match({ id: updatedRecord.id }) 
-        .select() 
-        .single(); 
+      if (isCreatingNewRecord) {
+        // INSERT new record
+        const { data: newRecordData, error } = await supabase
+          .from(selectedTableName)
+          .insert(payloadForSupabase)
+          .select()
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
 
-      if (savedRecord) {
-        setTableData(prevData => 
-          prevData 
-            ? prevData.map(r => r.id === savedRecord.id ? savedRecord : r) 
-            : null
-        );
-        toast({
-          title: "Success!",
-          description: `Record (ID: ${savedRecord.id}) in '${selectedTableName}' updated successfully.`,
-          className: "bg-accent text-accent-foreground"
-        });
-        handleCloseEditor();
+        if (newRecordData) {
+          setTableData(prevData => prevData ? [newRecordData, ...prevData] : [newRecordData]);
+          toast({
+            title: "Success!",
+            description: `New record (ID: ${newRecordData.id}) created in '${selectedTableName}'.`,
+            className: "bg-accent text-accent-foreground"
+          });
+          handleCloseEditor();
+        } else {
+           throw new Error("Insert operation returned no data or failed silently.");
+        }
+
       } else {
-         throw new Error("Record not found after update or update returned no data.");
+        // UPDATE existing record
+        if (!recordToSave.id) {
+          toast({ variant: "destructive", title: "Save Error", description: "Record ID is missing for update." });
+          return;
+        }
+        // Exclude 'id' from the update payload itself, as primary keys are usually not updatable.
+        const updatePayload = { ...payloadForSupabase };
+        delete updatePayload.id;
+
+        const { data: savedRecord, error } = await supabase
+          .from(selectedTableName)
+          .update(updatePayload)
+          .match({ id: recordToSave.id }) 
+          .select() 
+          .single(); 
+
+        if (error) throw error;
+
+        if (savedRecord) {
+          setTableData(prevData => 
+            prevData 
+              ? prevData.map(r => r.id === savedRecord.id ? savedRecord : r) 
+              : null
+          );
+          toast({
+            title: "Success!",
+            description: `Record (ID: ${savedRecord.id}) in '${selectedTableName}' updated successfully.`,
+            className: "bg-accent text-accent-foreground"
+          });
+          handleCloseEditor();
+        } else {
+           throw new Error("Record not found after update or update returned no data.");
+        }
       }
     } catch (error: any) {
       console.error("Failed to save record:", error);
       toast({
         variant: "destructive",
-        title: "Save Failed",
-        description: `Could not save changes: ${error.message || JSON.stringify(error)}`,
+        title: isCreatingNewRecord ? "Creation Failed" : "Update Failed",
+        description: `Could not ${isCreatingNewRecord ? 'create record' : 'save changes'}: ${error.message || JSON.stringify(error)}`,
       });
     }
   };
@@ -273,7 +346,10 @@ export default function HomePage() {
         isLoading={isLoadingTables}
       />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <AppHeader selectedTableName={selectedTableName} />
+        <AppHeader 
+            selectedTableName={selectedTableName} 
+            onAddNewRecord={handleOpenNewRecordEditor}
+        />
         <main className="flex-1 overflow-x-auto overflow-y-auto p-6 space-y-6">
           {!selectedTableName && isLoadingTables && ( 
              <div className="space-y-2 p-2">
@@ -340,6 +416,7 @@ export default function HomePage() {
           onSave={handleSaveRecord}
           onFieldChange={handleFieldChangeInEditor}
           tableName={selectedTableName}
+          isNewRecord={isCreatingNewRecord}
         />
       )}
     </div>
@@ -380,3 +457,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 */
+
