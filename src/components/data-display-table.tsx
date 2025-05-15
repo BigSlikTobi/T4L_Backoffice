@@ -41,12 +41,12 @@ export function DataDisplayTable({ data, columns, onSelectRecord, tableName }: D
           <TableCaption>
             Displaying records from the '{tableName}' table. {data.length === 0 ? "No records match your current search." : "Click edit to modify a record."}
           </TableCaption>
-          <TableHeader className="sticky top-0 bg-card z-10"> {/* Make header sticky */}
+          <TableHeader className="sticky top-0 bg-card z-10">{/* Make header sticky */}
             <TableRow>
               {columns.map((col) => (
                 <TableHead key={col} className="whitespace-nowrap">{col}</TableHead>
               ))}
-              <TableHead className="text-right whitespace-nowrap sticky right-0 bg-card">Actions</TableHead> {/* Sticky action column */}
+              <TableHead className="text-right whitespace-nowrap sticky right-0 bg-card">Actions</TableHead>{/* Sticky action column */}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -57,7 +57,7 @@ export function DataDisplayTable({ data, columns, onSelectRecord, tableName }: D
                     {truncateText(String(row[col] === null || row[col] === undefined ? '' : row[col]))}
                   </TableCell>
                 ))}
-                <TableCell className="text-right sticky right-0 bg-background hover:bg-muted/50"> {/* Sticky action cell, ensure bg matches row */}
+                <TableCell className="text-right sticky right-0 bg-background hover:bg-muted/50">{/* Sticky action cell, ensure bg matches row */}
                   <Button variant="ghost" size="icon" onClick={() => onSelectRecord(row)} aria-label={`Edit record ${row.id || rowIndex}`}>
                     <Edit3 className="h-4 w-4" />
                   </Button>
