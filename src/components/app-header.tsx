@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { UserCircle, PlusCircle } from 'lucide-react';
 
 interface AppHeaderProps {
-  selectedTableName: string | null;
-  onAddNewRecord: () => void;
+  selectedTableName: string | null; // This will refer to the left panel's table
+  onAddNewRecord?: () => void; // Optional: only enable if a table is selected in the left panel
 }
 
 export function AppHeader({ selectedTableName, onAddNewRecord }: AppHeaderProps) {
@@ -26,7 +26,7 @@ export function AppHeader({ selectedTableName, onAddNewRecord }: AppHeaderProps)
         </h1>
       </div>
       <div className="flex items-center gap-2">
-        {selectedTableName && (
+        {selectedTableName && onAddNewRecord && ( // "New Record" button tied to left panel's selected table
           <Button
             variant="outline"
             size="sm"
