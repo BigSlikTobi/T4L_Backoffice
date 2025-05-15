@@ -16,8 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox"; 
+// Removed Skeleton and Combobox imports as they are no longer used for FKs
 import type { TableSchema, ColumnDetail } from "@/data/mock-data"; 
 
 interface RecordEditorProps {
@@ -29,7 +28,7 @@ interface RecordEditorProps {
   onFieldChange: (fieldName: string, value: any) => void;
   tableName: string;
   isNewRecord: boolean;
-  supabaseClient: SupabaseClient; 
+  supabaseClient: SupabaseClient; // Keep for potential future use, not strictly needed for this simplified version
 }
 
 export function RecordEditor({
@@ -41,95 +40,16 @@ export function RecordEditor({
   onFieldChange,
   tableName,
   isNewRecord,
-  supabaseClient
+  supabaseClient // Keep for potential future use
 }: RecordEditorProps) {
-  const [fkOptions, setFkOptions] = React.useState<Record<string, ComboboxOption[]>>({});
-  const [fkLoading, setFkLoading] = React.useState<Record<string, boolean>>({});
+
+  // Removed useEffect for fetching FK options and related state (fkOptions, fkLoading)
 
   React.useEffect(() => {
-    if (!isOpen || !tableSchema || !tableSchema.columns) {
-      setFkOptions({}); 
-      return;
+    if (isOpen && tableSchema && tableSchema.columns) {
+      console.log(`[RecordEditor] Received columns for table '${tableSchema.name}':`, JSON.stringify(tableSchema.columns, null, 2));
     }
-    const columns = tableSchema.columns;
-    console.log(`[RecordEditor] Received columns for table '${tableSchema.name}':`, JSON.stringify(columns, null, 2));
-
-    const fetchFkData = async () => {
-      for (const col of columns) {
-        if (col.foreign_key_table && col.foreign_key_column) {
-          console.log(`[RecordEditor] Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
-          setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
-          try {
-            
-            const selectQuery = '*'; // Fetch all columns
-            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' using query: select(${selectQuery})`);
-            
-            const { data, error } = await supabaseClient
-              .from(col.foreign_key_table)
-              .select(selectQuery) 
-              .limit(200);
-
-            if (error) {
-              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(${selectQuery})": ${error.message}`);
-              setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
-            } else {
-              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to ComboboxOption format.`);
-              
-              const mappedOptions: ComboboxOption[] = (data || []).map(item => {
-                const optionValue = item[col.foreign_key_column!]; 
-                
-                const labelParts: string[] = [];
-                for (const key in item) {
-                    if (Object.prototype.hasOwnProperty.call(item, key)) {
-                        const val = item[key];
-                        // Exclude metadata timestamps and the FK ID itself if other fields exist to form the label
-                        if (key.endsWith('_at') || (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length > 1) ) {
-                           if (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length <= 1) {
-                                // keep fk id in label if it's the only non-timestamp field
-                           } else {
-                               continue;
-                           }
-                        }
-                        if (val !== null && val !== undefined && String(val).trim() !== '') {
-                            labelParts.push(String(val));
-                        }
-                    }
-                }
-                
-                let tempLabel = labelParts.join(' | '); 
-                if (labelParts.length === 0 || (labelParts.length === 1 && labelParts[0] === String(optionValue))) { 
-                    // If no other parts or only the ID itself is found, ensure ID is clearly labeled.
-                    tempLabel = `ID: ${optionValue}`; 
-                } else if (Object.keys(item).length > 1 && !tempLabel.includes(String(optionValue)) && col.foreign_key_column && item[col.foreign_key_column!] !== undefined) {
-                    // If ID is not already part of the label and there are multiple fields, append it for clarity.
-                    tempLabel = `${tempLabel} (ID: ${optionValue})`;
-                }
-
-
-                const MAX_LABEL_LENGTH = 80; 
-                let finalLabel = tempLabel;
-                if (tempLabel.length > MAX_LABEL_LENGTH) {
-                    finalLabel = tempLabel.substring(0, MAX_LABEL_LENGTH - 3) + "...";
-                }
-
-                return {
-                  value: optionValue, // Original type
-                  label: finalLabel,
-                };
-              });
-              setFkOptions(prev => ({ ...prev, [col.column_name]: mappedOptions }));
-            }
-          } catch (error: any) { 
-            console.error(`[RecordEditor] Outer error processing FK options for column '${col.column_name}': ${error.message || JSON.stringify(error)}`);
-            setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
-          } finally {
-            setFkLoading(prev => ({ ...prev, [col.column_name]: false }));
-          }
-        }
-      }
-    };
-    fetchFkData();
-  }, [isOpen, tableSchema, supabaseClient]);
+  }, [isOpen, tableSchema]);
 
 
   if (!record) return null;
@@ -142,7 +62,7 @@ export function RecordEditor({
     const dataType = column.data_type.toLowerCase();
     if (dataType.includes('timestamp') || dataType.includes('date')) return 'datetime-local';
     if (dataType.includes('bool')) return 'checkbox'; 
-    if (dataType.includes('int') || dataType.includes('numeric') || dataType.includes('decimal') || dataType.includes('real') || dataType.includes('double')) return 'number';
+    if (dataType.includes('int') || dataType.includes('numeric') || dataType.includes('decimal') || dataType.includes('real') || dataType.includes('double') || dataType.includes('bigint')) return 'number';
     return 'text';
   }
   
@@ -160,8 +80,12 @@ export function RecordEditor({
     return String(value);
   }
 
-  const getColumnLabel = (columnName: string): string => {
-    return columnName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const getColumnLabel = (column: ColumnDetail): string => {
+    let label = column.column_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    if (column.foreign_key_table) {
+      label += ` (FK to ${column.foreign_key_table}.${column.foreign_key_column})`;
+    }
+    return label;
   }
 
   return (
@@ -193,7 +117,7 @@ export function RecordEditor({
                  return (
                     <div key={colName} className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor={colName} className="text-right">
-                        {getColumnLabel(colName)}
+                        {getColumnLabel(col)}
                         </Label>
                         <Input
                         id={colName}
@@ -206,76 +130,34 @@ export function RecordEditor({
                  );
                }
 
-
-              if (col.foreign_key_table && col.foreign_key_column) {
-                const currentFKValue = record[colName];
-                console.log(`[RecordEditor] Rendering Combobox for ${colName}. currentFKValue: ${currentFKValue}, type: ${typeof currentFKValue}`);
-                const optionsForFK = fkOptions[colName] || [];
-                
-                return (
-                  <div key={colName} className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor={colName} className="text-right">
-                      {getColumnLabel(colName)}
-                    </Label>
-                    {fkLoading[colName] ? (
-                      <Skeleton className="h-10 w-full col-span-3" />
-                    ) : (
-                      <Combobox
-                        options={optionsForFK}
-                        value={currentFKValue} // This is the actual value (e.g., number or string ID)
-                        onChange={(selectedValue) => { // selectedValue from Combobox is original type
-                           let finalValue: any = selectedValue;
-                           if (selectedValue !== null) {
-                             const targetIsNumeric = col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double');
-                             if (targetIsNumeric) {
-                               const num = Number(selectedValue);
-                               if (!isNaN(num)) {
-                                 finalValue = num;
-                               } else {
-                                 console.error(`[RecordEditor] Failed to convert selected FK value "${selectedValue}" to number for column ${colName} (type ${col.data_type}). Keeping original: ${selectedValue}`);
-                                 finalValue = selectedValue; // Or consider setting to null or throwing error
-                               }
-                             }
-                           }
-                           console.log(`[RecordEditor] onFieldChange for ${colName} with finalValue: ${finalValue} (type: ${typeof finalValue})`);
-                           onFieldChange(colName, finalValue);
-                        }}
-                        placeholder={`Select ${getColumnLabel(col.foreign_key_table)}...`}
-                        searchPlaceholder="Search..."
-                        emptyText="No options found."
-                        disabled={isReadOnly}
-                        triggerClassName="col-span-3"
-                        allowNull={col.is_nullable === 'YES'}
-                        nullLabel={`-- None (${getColumnLabel(colName)}) --`}
-                      />
-                    )}
-                  </div>
-                );
-              }
-              
+              // Reverted to standard Input for all fields, including FKs
               const fieldType = getFieldType(col);
               
               return (
                 <div key={colName} className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor={colName} className="text-right">
-                    {getColumnLabel(colName)}
+                    {getColumnLabel(col)}
                   </Label>
                   <Input
                     id={colName}
                     type={fieldType}
                     value={formatFieldValue(record[colName], fieldType)}
                     onChange={(e) => {
-                        let val: string | number = e.target.value;
+                        let val: string | number | null = e.target.value;
                         if (fieldType === 'number') {
-                           val = e.target.valueAsNumber;
-                           if (isNaN(val)) val = e.target.value; 
+                           if (e.target.value === '') { // Allow clearing number field to null if nullable
+                             val = col.is_nullable === 'YES' ? null : 0; // Or some default if not nullable
+                           } else {
+                             const num = parseFloat(e.target.value);
+                             val = isNaN(num) ? e.target.value : num; // Keep as string if not a valid number
+                           }
                         }
                         onFieldChange(colName, val);
                     }}
                     className="col-span-3"
                     disabled={isReadOnly}
                     aria-readonly={isReadOnly}
-                    placeholder={col.is_nullable === 'YES' ? 'Optional' : ''}
+                    placeholder={col.is_nullable === 'YES' ? 'Optional' : (fieldType === 'number' ? '0' : '')}
                   />
                 </div>
               );
@@ -294,4 +176,3 @@ export function RecordEditor({
     </Dialog>
   );
 }
-
