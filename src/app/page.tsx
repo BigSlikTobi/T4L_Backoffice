@@ -54,6 +54,13 @@ export default function HomePage() {
             const { data: columnDataRpc, error: columnErrorRpc } = await supabase
               .rpc('get_table_columns_info', { p_table_name: table.table_name });
 
+            // Diagnostic log: Show raw data from RPC for this table
+            console.log(`[Page] Raw columnDataRpc for table '${table.table_name}':`, JSON.stringify(columnDataRpc, null, 2));
+            if (columnErrorRpc) {
+                console.error(`[Page] Error from get_table_columns_info RPC for table '${table.table_name}':`, columnErrorRpc);
+            }
+
+
             if (columnErrorRpc) {
                 const errorDetail = columnErrorRpc.message || JSON.stringify(columnErrorRpc);
                 const errorMsg = `Failed to get column info for table '${table.table_name}' using 'get_table_columns_info' RPC. Error: ${errorDetail}. Check RPC definition/permissions and Supabase logs. Ensure the RPC function is defined as per the SQL in page.tsx comments.`;
@@ -63,7 +70,7 @@ export default function HomePage() {
                 }
                 throw new Error(errorMsg); 
             } else if (columnDataRpc && columnDataRpc.length > 0) {
-                columns = columnDataRpc.map((col: any) => ({ // Cast to any to handle RPC return shape
+                columns = columnDataRpc.map((col: any) => ({ 
                     column_name: col.column_name,
                     data_type: col.data_type,
                     ordinal_position: col.ordinal_position,
@@ -74,6 +81,7 @@ export default function HomePage() {
                 }));
             } else {
                  // Fallback to sample row if RPC returns no columns (should be less common with improved RPC)
+                 console.warn(`[Page] 'get_table_columns_info' RPC returned no columns for table '${table.table_name}'. Attempting fallback to sample row.`);
                 const { data: sampleRowData, error: sampleRowError } = await supabase
                     .from(table.table_name)
                     .select('*')
@@ -90,11 +98,11 @@ export default function HomePage() {
                 if (sampleRowData && Object.keys(sampleRowData).length > 0) {
                     columns = Object.keys(sampleRowData).map((colName, index) => ({
                         column_name: colName,
-                        data_type: 'unknown', // Cannot infer data type from sample alone reliably
+                        data_type: 'unknown', 
                         ordinal_position: index + 1,
-                        is_nullable: 'YES', // Assume nullable as a safe default
-                        is_primary_key: colName.toLowerCase() === 'id', // Basic assumption
-                        foreign_key_table: null,
+                        is_nullable: 'YES', 
+                        is_primary_key: colName.toLowerCase() === 'id', 
+                        foreign_key_table: null, // Cannot infer FK from sample row
                         foreign_key_column: null,
                     }));
                 } else {
@@ -104,11 +112,10 @@ export default function HomePage() {
             
             if (columns.length === 0) {
                 console.warn(`Unable to determine columns for table '${table.table_name}'. This table might be skipped or have limited functionality. Ensure 'get_table_columns_info' RPC is working or the table has data.`);
-                // Return a minimal schema or null to filter out later
-                return { name: table.table_name, columns: [{ column_name: 'id', data_type: 'uuid', ordinal_position: 1, is_nullable: 'NO', is_primary_key: true, foreign_key_column: null, foreign_key_table: null } as ColumnDetail]}; // Default to an 'id' column
+                // Return a minimal schema with at least an ID column to prevent app from breaking if other tables are fine
+                return { name: table.table_name, columns: [{ column_name: 'id', data_type: 'uuid', ordinal_position: 1, is_nullable: 'NO', is_primary_key: true, foreign_key_column: null, foreign_key_table: null } as ColumnDetail]}; 
             }
             
-            // Determine displayColumns: prioritize 'name', 'title', then first few actual columns
             let displayColumnNames: string[] = [];
             const preferredDisplayCols = ['name', 'title', 'label', 'description'];
             for (const preferred of preferredDisplayCols) {
@@ -120,13 +127,12 @@ export default function HomePage() {
             if (displayColumnNames.length === 0 && columns.find(c => c.column_name === 'id')) {
                  displayColumnNames.push('id');
             }
-            // Add a few more columns if available, up to a limit (e.g., 3-4 total)
             const remainingCols = columns.filter(c => !displayColumnNames.includes(c.column_name));
             for (let i = 0; i < remainingCols.length && displayColumnNames.length < 4; i++) {
                 displayColumnNames.push(remainingCols[i].column_name);
             }
              if (displayColumnNames.length === 0 && columns.length > 0) {
-                displayColumnNames.push(columns[0].column_name); // At least one column
+                displayColumnNames.push(columns[0].column_name); 
             }
 
 
@@ -134,6 +140,7 @@ export default function HomePage() {
           })
         );
       }
+      // Filter out tables that ended up with no valid columns or only a default 'id' if that was added as a placeholder for an empty table
       setTables(fetchedTables.filter(t => t && t.columns && t.columns.length > 0 && t.columns.some(c => c.column_name !== 'id' || t.columns.length === 1) ));
     } catch (error: any) {
       console.error("Raw error caught in fetchTables:", error); 
@@ -242,7 +249,6 @@ export default function HomePage() {
       if (col.is_primary_key || col.column_name.toLowerCase().endsWith('_at')) {
         return acc;
       }
-      // For foreign keys, initialize with null or undefined to allow placeholder in Select
       acc[col.column_name] = col.foreign_key_table ? null : ''; 
       return acc;
     }, {} as Record<string, any>);
@@ -278,11 +284,9 @@ export default function HomePage() {
     currentTableSchema.columns.forEach(col => {
       const colName = col.column_name;
       if (Object.prototype.hasOwnProperty.call(recordToSave, colName)) {
-        if (isCreatingNewRecord && col.is_primary_key) { // Don't send PK for new records if auto-generated
+        if (isCreatingNewRecord && col.is_primary_key) { 
           return; 
         }
-        // Convert empty strings to null for fields that are not text/varchar, or if they are nullable FKs
-        // Supabase handles type conversion for basic types, but explicit null might be better.
         if (recordToSave[colName] === '' && col.data_type !== 'text' && col.data_type !== 'character varying' && col.is_nullable === 'YES') {
             payloadForSupabase[colName] = null;
         } else {
@@ -291,7 +295,6 @@ export default function HomePage() {
       }
     });
     
-    // Clean up undefined values
     for (const key in payloadForSupabase) {
       if (payloadForSupabase[key] === undefined) {
         delete payloadForSupabase[key];
@@ -312,7 +315,7 @@ export default function HomePage() {
           setTableData(prevData => prevData ? [newRecordData, ...prevData] : [newRecordData]);
           toast({
             title: "Success!",
-            description: `New record created in '${selectedTableName}'.`, // ID might not be simple 'id'
+            description: `New record created in '${selectedTableName}'.`,
             className: "bg-accent text-accent-foreground"
           });
           handleCloseEditor();
@@ -321,8 +324,6 @@ export default function HomePage() {
         }
 
       } else {
-        // UPDATE existing record
-        // Determine primary key column(s) for the match
         const primaryKeyColumns = currentTableSchema.columns.filter(c => c.is_primary_key);
         if (primaryKeyColumns.length === 0) {
             toast({ variant: "destructive", title: "Save Error", description: "Cannot update: Table has no identified primary key." });
@@ -337,7 +338,7 @@ export default function HomePage() {
         });
         
         const updatePayload = { ...payloadForSupabase };
-        primaryKeyColumns.forEach(pkCol => delete updatePayload[pkCol.column_name]); // Don't include PK in update payload itself
+        primaryKeyColumns.forEach(pkCol => delete updatePayload[pkCol.column_name]); 
 
         const { data: savedRecord, error } = await supabase
           .from(selectedTableName)
@@ -352,7 +353,6 @@ export default function HomePage() {
           setTableData(prevData => 
             prevData 
               ? prevData.map(r => {
-                  // Match based on all PKs for composite key scenarios
                   const isMatch = primaryKeyColumns.every(pkCol => r[pkCol.column_name] === savedRecord[pkCol.column_name]);
                   return isMatch ? savedRecord : r;
               })
@@ -444,7 +444,7 @@ export default function HomePage() {
           {!isLoadingData && !dataError && tableData && currentTableSchema && selectedTableName && (
             <DataDisplayTable
               data={tableData}
-              columns={displayColsForTable} // Use derived display columns
+              columns={displayColsForTable} 
               onSelectRecord={handleOpenEditor}
               tableName={selectedTableName}
             />
@@ -454,14 +454,14 @@ export default function HomePage() {
       {isEditorOpen && editingRecord && currentTableSchema && selectedTableName && (
         <RecordEditor
           record={editingRecord}
-          tableSchema={currentTableSchema} // Pass the full schema
+          tableSchema={currentTableSchema} 
           isOpen={isEditorOpen}
           onClose={handleCloseEditor}
           onSave={handleSaveRecord}
           onFieldChange={handleFieldChangeInEditor}
           tableName={selectedTableName}
           isNewRecord={isCreatingNewRecord}
-          supabaseClient={supabase} // Pass Supabase client for FK fetching
+          supabaseClient={supabase} 
         />
       )}
     </div>
