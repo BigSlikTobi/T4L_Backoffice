@@ -58,6 +58,7 @@ export function Combobox({
     if (allowNull) {
       const hasNullOption = options.some(opt => opt.value === "NULL_VALUE_PLACEHOLDER" || opt.value === null);
       if (!hasNullOption) {
+        // Use a unique string placeholder for the null option's value if actual null is problematic for cmdk keying
         return [{ value: "NULL_VALUE_PLACEHOLDER", label: nullLabel }, ...options];
       }
     }
@@ -65,10 +66,14 @@ export function Combobox({
   }, [options, allowNull, nullLabel]);
 
   const selectedOption = allOptions.find((option) => {
+    // Handles actual null or the placeholder for null
     if (value === null || value === "NULL_VALUE_PLACEHOLDER") {
       return option.value === "NULL_VALUE_PLACEHOLDER";
     }
-    return option.value === value;
+    // Compare potentially different types (e.g. number from state, string from option value if all are stringified)
+    // It's safer if option.value and `value` prop are of consistent types.
+    // For now, assume they might match or try string comparison if one is string and other is not.
+    return String(option.value) === String(value);
   });
 
   return (
@@ -95,20 +100,23 @@ export function Combobox({
             <CommandGroup>
               {allOptions.map((option) => (
                 <CommandItem
-                  key={String(option.value)} // Ensure key is unique and string
-                  value={option.label} // Value for cmdk filtering/selection
-                  onSelect={(currentLabel) => {
+                  key={String(option.value) === "NULL_VALUE_PLACEHOLDER" ? "null-option-key" : String(option.value)}
+                  value={String(option.value)} // Use the actual value (as string) for cmdk
+                  onSelect={(selectedValueString) => {
                     const newSelectedOption = allOptions.find(
-                      (opt) => opt.label.toLowerCase() === currentLabel.toLowerCase()
+                      (opt) => String(opt.value) === selectedValueString
                     );
+
                     if (newSelectedOption) {
                       if (newSelectedOption.value === "NULL_VALUE_PLACEHOLDER") {
                         onChange(null);
                       } else {
+                        // Pass the original option.value (could be number or string)
                         onChange(newSelectedOption.value);
                       }
                     } else {
-                      onChange(null); // Or handle as error/no change
+                       // Should not happen if selectedValueString comes from an existing option
+                      onChange(null);
                     }
                     setOpen(false);
                   }}
@@ -116,7 +124,8 @@ export function Combobox({
                   <Check
                     className={cn(
                       "mr-2 h-4 w-4",
-                      (option.value === "NULL_VALUE_PLACEHOLDER" && (value === null || value === "NULL_VALUE_PLACEHOLDER")) || option.value === value
+                      ( (value === null || value === "NULL_VALUE_PLACEHOLDER") && option.value === "NULL_VALUE_PLACEHOLDER" ) ||
+                      (value !== null && value !== "NULL_VALUE_PLACEHOLDER" && String(option.value) === String(value))
                         ? "opacity-100"
                         : "opacity-0"
                     )}
