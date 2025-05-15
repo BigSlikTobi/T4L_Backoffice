@@ -33,7 +33,7 @@ interface RecordEditorProps {
 }
 
 interface FkOption {
-  value: string | number | null; // Allow null for value if FK can be null
+  value: string | number | null; 
   label: string;
 }
 
@@ -51,15 +51,14 @@ export function RecordEditor({
   const [fkOptions, setFkOptions] = React.useState<Record<string, FkOption[]>>({});
   const [fkLoading, setFkLoading] = React.useState<Record<string, boolean>>({});
 
-  const columns = tableSchema.columns;
-
   React.useEffect(() => {
-    console.log("[RecordEditor] Received columns:", JSON.stringify(columns, null, 2));
-
-    if (!isOpen || !columns) {
-      console.log("[RecordEditor] useEffect skipped: isOpen is false or columns are not defined.");
+    if (!isOpen || !tableSchema || !tableSchema.columns) {
+      console.log("[RecordEditor] useEffect skipped: isOpen is false or tableSchema/columns are not defined.");
+      setFkOptions({}); // Clear options if editor is closed or schema is invalid
       return;
     }
+    const columns = tableSchema.columns;
+    console.log("[RecordEditor] Received columns:", JSON.stringify(columns, null, 2));
 
     const fetchFkData = async () => {
       for (const col of columns) {
@@ -67,68 +66,54 @@ export function RecordEditor({
           console.log(`[RecordEditor] Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
-            const displayColumnCandidates = ['name', 'title', 'label', 'description'];
-            
-            let fieldsToSelect: string[] = [col.foreign_key_column]; // Always select the actual FK column
-            let labelSourceField = col.foreign_key_column; // Default to FK column for label
-
-            for (const candidate of displayColumnCandidates) {
-              if (candidate === col.foreign_key_column) continue; 
-              try {
-                console.log(`[RecordEditor] Attempting to use candidate display column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}'.`);
-                // Test if candidate column exists and has meaningful data
-                const { data: testData, error: testError } = await supabaseClient
-                  .from(col.foreign_key_table)
-                  .select(`${col.foreign_key_column}, ${candidate}`) 
-                  .limit(1); 
-
-                if (testError) {
-                  console.warn(`[RecordEditor] Test query for candidate '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' failed: ${testError.message}`);
-                  continue; 
-                }
-
-                if (testData && testData.length > 0 && testData[0] && 
-                    (testData[0][candidate] !== null && testData[0][candidate] !== undefined && String(testData[0][candidate]).trim() !== '')) {
-                  if (!fieldsToSelect.includes(candidate)) {
-                    fieldsToSelect.push(candidate);
-                  }
-                  labelSourceField = candidate;
-                  console.log(`[RecordEditor] Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
-                  break; 
-                } else {
-                  console.warn(`[RecordEditor] Candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' exists but returned null, undefined, or empty for the test row.`);
-                }
-              } catch (e: any) {
-                console.warn(
-                  `[RecordEditor] Error during attempt to validate candidate '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}'. Error: ${e.message || JSON.stringify(e)}`
-                );
-              }
-            }
-            
-            if (labelSourceField === col.foreign_key_column) {
-                 console.log(
-                `[RecordEditor] Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
-              );
-            }
-
-            const finalSelectQuery = fieldsToSelect.join(', ');
-            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' with query: "select(${finalSelectQuery})"`);
-
+            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' with query: "select(*)"`);
 
             const { data, error } = await supabaseClient
               .from(col.foreign_key_table)
-              .select(finalSelectQuery) 
+              .select('*') // Fetch all columns
               .limit(200); 
 
             if (error) {
-              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(${finalSelectQuery})": ${error.message}`);
+              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(*)": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
               console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to FkOption format.`);
-              const mappedOptions: FkOption[] = (data || []).map(item => ({
-                value: item[col.foreign_key_column], // Keep original type for value (string, number, or null)
-                label: String(item[labelSourceField] === null || item[labelSourceField] === undefined ? item[col.foreign_key_column] : item[labelSourceField])
-              }));
+              const mappedOptions: FkOption[] = (data || []).map(item => {
+                const optionValue = item[col.foreign_key_column!]; // Assert not null as FK column is known
+                
+                const labelParts: string[] = [];
+                
+                // Iterate over all properties of the fetched item (all columns of the foreign table row)
+                for (const key in item) {
+                    if (item.hasOwnProperty(key)) {
+                        const value = item[key];
+                        // Exclude typical metadata columns like 'created_at', 'updated_at' from the composite label
+                        if (key.endsWith('_at')) {
+                            continue;
+                        }
+                        
+                        if (value !== null && value !== undefined && String(value).trim() !== '') {
+                            labelParts.push(String(value));
+                        }
+                    }
+                }
+                
+                let tempLabel = labelParts.join(' | '); 
+                if (labelParts.length === 0) { // Fallback if all parts were empty or skipped
+                    tempLabel = String(optionValue); // Default to the ID if no other info
+                }
+
+                const MAX_LABEL_LENGTH = 80; 
+                let finalLabel = tempLabel;
+                if (tempLabel.length > MAX_LABEL_LENGTH) {
+                    finalLabel = tempLabel.substring(0, MAX_LABEL_LENGTH - 3) + "...";
+                }
+
+                return {
+                  value: optionValue,
+                  label: finalLabel,
+                };
+              });
               setFkOptions(prev => ({ ...prev, [col.column_name]: mappedOptions }));
             }
           } catch (error: any) { 
@@ -137,13 +122,11 @@ export function RecordEditor({
           } finally {
             setFkLoading(prev => ({ ...prev, [col.column_name]: false }));
           }
-        } else {
-          // console.log(`[RecordEditor] Column '${col.column_name}' is not a foreign key or FK info is missing.`);
         }
       }
     };
     fetchFkData();
-  }, [isOpen, columns, supabaseClient, tableSchema.name]);
+  }, [isOpen, tableSchema, supabaseClient]);
 
 
   if (!record) return null;
@@ -194,7 +177,7 @@ export function RecordEditor({
         </DialogHeader>
         <ScrollArea className="flex-grow pr-6 -mr-6"> 
           <div className="grid gap-4 py-4">
-            {columns.map((col) => {
+            {tableSchema.columns.map((col) => {
               const colName = col.column_name;
               const isAutoManagedTimestamp = colName.toLowerCase().endsWith('_at') && 
                                            (col.data_type.includes('timestamp') || col.data_type.includes('timestamptz'));
@@ -232,7 +215,7 @@ export function RecordEditor({
                     ) : (
                       <Select
                         value={record[colName] !== null && record[colName] !== undefined ? String(record[colName]) : ""}
-                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : (col.data_type.includes('int') || col.data_type.includes('numeric') ? Number(value) : value) )} 
+                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : (col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double') ? Number(value) : value) )} 
                         disabled={isReadOnly}
                       >
                         <SelectTrigger className="col-span-3">
@@ -244,7 +227,7 @@ export function RecordEditor({
                           )}
                           {(fkOptions[colName] || []).map(option => (
                             <SelectItem key={String(option.value)} value={String(option.value)}>
-                              {option.label} {String(option.value) !== String(option.label) && option.value !== null ? `(${option.value})` : ''}
+                              {option.label} {String(option.value) !== String(option.label) && option.value !== null && !option.label.includes(String(option.value)) ? `(${option.value})` : ''}
                             </SelectItem>
                           ))}
                            {(!fkOptions[colName] || fkOptions[colName].length === 0) && col.is_nullable !== 'YES' && (
