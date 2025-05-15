@@ -54,7 +54,6 @@ export function RecordEditor({
   const columns = tableSchema.columns;
 
   React.useEffect(() => {
-    // Diagnostic log: Display the columns array received by the RecordEditor
     console.log("[RecordEditor] Received columns:", JSON.stringify(columns, null, 2));
 
     if (!isOpen || !columns) {
@@ -88,7 +87,7 @@ export function RecordEditor({
 
                 if (testData && testData.length > 0 && testData[0] && 
                     (testData[0][candidate] !== null && testData[0][candidate] !== undefined && String(testData[0][candidate]).trim() !== '')) {
-                  selectQuery = `${col.foreign_key_column} as value, ${candidate} as label`;
+                  selectQuery = `${col.foreign_key_column}:value, ${candidate}:label`; // Use colon for aliasing
                   fetchedSuccessfullyWithDisplayName = true;
                   console.log(`[RecordEditor] Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
                   break; 
@@ -103,7 +102,7 @@ export function RecordEditor({
             }
             
             if (!fetchedSuccessfullyWithDisplayName) {
-              selectQuery = `${col.foreign_key_column} as value, ${col.foreign_key_column} as label`;
+              selectQuery = `${col.foreign_key_column}:value, ${col.foreign_key_column}:label`; // Use colon for aliasing
               console.log(
                 `[RecordEditor] Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
               );
