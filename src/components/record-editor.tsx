@@ -33,7 +33,7 @@ interface RecordEditorProps {
 }
 
 interface FkOption {
-  value: string | number;
+  value: string | number | null; // Allow null for value if FK can be null
   label: string;
 }
 
@@ -68,13 +68,15 @@ export function RecordEditor({
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
             const displayColumnCandidates = ['name', 'title', 'label', 'description'];
-            let selectQuery = ""; 
-            let fetchedSuccessfullyWithDisplayName = false;
+            
+            let fieldsToSelect: string[] = [col.foreign_key_column]; // Always select the actual FK column
+            let labelSourceField = col.foreign_key_column; // Default to FK column for label
 
             for (const candidate of displayColumnCandidates) {
               if (candidate === col.foreign_key_column) continue; 
               try {
                 console.log(`[RecordEditor] Attempting to use candidate display column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}'.`);
+                // Test if candidate column exists and has meaningful data
                 const { data: testData, error: testError } = await supabaseClient
                   .from(col.foreign_key_table)
                   .select(`${col.foreign_key_column}, ${candidate}`) 
@@ -87,8 +89,10 @@ export function RecordEditor({
 
                 if (testData && testData.length > 0 && testData[0] && 
                     (testData[0][candidate] !== null && testData[0][candidate] !== undefined && String(testData[0][candidate]).trim() !== '')) {
-                  selectQuery = `${col.foreign_key_column}:value, ${candidate}:label`; // Use colon for aliasing
-                  fetchedSuccessfullyWithDisplayName = true;
+                  if (!fieldsToSelect.includes(candidate)) {
+                    fieldsToSelect.push(candidate);
+                  }
+                  labelSourceField = candidate;
                   console.log(`[RecordEditor] Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
                   break; 
                 } else {
@@ -101,24 +105,31 @@ export function RecordEditor({
               }
             }
             
-            if (!fetchedSuccessfullyWithDisplayName) {
-              selectQuery = `${col.foreign_key_column}:value, ${col.foreign_key_column}:label`; // Use colon for aliasing
-              console.log(
+            if (labelSourceField === col.foreign_key_column) {
+                 console.log(
                 `[RecordEditor] Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
               );
             }
 
+            const finalSelectQuery = fieldsToSelect.join(', ');
+            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' with query: "select(${finalSelectQuery})"`);
+
+
             const { data, error } = await supabaseClient
               .from(col.foreign_key_table)
-              .select(selectQuery) 
+              .select(finalSelectQuery) 
               .limit(200); 
 
             if (error) {
-              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "${selectQuery}": ${error.message}`);
+              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(${finalSelectQuery})": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
-              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'.`);
-              setFkOptions(prev => ({ ...prev, [col.column_name]: data as FkOption[] || [] }));
+              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to FkOption format.`);
+              const mappedOptions: FkOption[] = (data || []).map(item => ({
+                value: item[col.foreign_key_column], // Keep original type for value (string, number, or null)
+                label: String(item[labelSourceField] === null || item[labelSourceField] === undefined ? item[col.foreign_key_column] : item[labelSourceField])
+              }));
+              setFkOptions(prev => ({ ...prev, [col.column_name]: mappedOptions }));
             }
           } catch (error: any) { 
             console.error(`[RecordEditor] Outer error processing FK options for column '${col.column_name}': ${error.message || JSON.stringify(error)}`);
@@ -221,7 +232,7 @@ export function RecordEditor({
                     ) : (
                       <Select
                         value={record[colName] !== null && record[colName] !== undefined ? String(record[colName]) : ""}
-                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : value)} 
+                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : (col.data_type.includes('int') || col.data_type.includes('numeric') ? Number(value) : value) )} 
                         disabled={isReadOnly}
                       >
                         <SelectTrigger className="col-span-3">
@@ -232,8 +243,8 @@ export function RecordEditor({
                             <SelectItem value="NULL_VALUE_PLACEHOLDER">-- None --</SelectItem>
                           )}
                           {(fkOptions[colName] || []).map(option => (
-                            <SelectItem key={option.value} value={String(option.value)}>
-                              {option.label} {String(option.value) !== String(option.label) ? `(${option.value})` : ''}
+                            <SelectItem key={String(option.value)} value={String(option.value)}>
+                              {option.label} {String(option.value) !== String(option.label) && option.value !== null ? `(${option.value})` : ''}
                             </SelectItem>
                           ))}
                            {(!fkOptions[colName] || fkOptions[colName].length === 0) && col.is_nullable !== 'YES' && (
@@ -280,4 +291,3 @@ export function RecordEditor({
     </Dialog>
   );
 }
-
