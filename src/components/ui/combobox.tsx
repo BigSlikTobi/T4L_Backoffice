@@ -71,11 +71,12 @@ export function Combobox({
     return String(option.value) === String(value);
   });
 
-  const handleValueChange = (selectedValueString: string) => {
-    console.log(`[Combobox] Command onValueChange triggered. selectedValueString: ${selectedValueString}`);
+  // Centralized function to handle item selection
+  const handleItemSelect = (selectedValueFromItem: any) => {
+    console.log(`[Combobox] handleItemSelect called with selectedValueFromItem: ${selectedValueFromItem}, type: ${typeof selectedValueFromItem}`);
     
     const newSelectedOption = allOptions.find(
-      (opt) => String(opt.value) === selectedValueString
+      (opt) => String(opt.value) === String(selectedValueFromItem)
     );
 
     if (newSelectedOption) {
@@ -84,16 +85,16 @@ export function Combobox({
         onChange(null);
         console.log(`[Combobox] Calling onChange with null`);
       } else {
-        onChange(newSelectedOption.value);
+        onChange(newSelectedOption.value); // Pass the original value type
         console.log(`[Combobox] Calling onChange with value: ${newSelectedOption.value}`);
       }
     } else {
-      console.warn(`[Combobox] newSelectedOption not found for selectedValueString: ${selectedValueString}`);
-      // Fallback or error, perhaps call onChange with null or current value
+      console.warn(`[Combobox] newSelectedOption not found for selectedValueFromItem: ${selectedValueFromItem}`);
       onChange(null); // Or perhaps don't change if not found
     }
     setOpen(false);
   };
+  
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -112,7 +113,7 @@ export function Combobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className={cn("w-[--radix-popover-trigger-width] p-0", contentClassName)}>
-        <Command onValueChange={handleValueChange}>
+        <Command>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>
             <CommandEmpty>{emptyText}</CommandEmpty>
@@ -120,8 +121,13 @@ export function Combobox({
               {allOptions.map((option) => (
                 <CommandItem
                   key={String(option.value) === "NULL_VALUE_PLACEHOLDER" ? "null-option-key" : String(option.value)}
-                  value={String(option.value)} // This value is passed to Command's onValueChange
-                  // onSelect prop removed from CommandItem
+                  value={String(option.value)} // cmdk uses this for filtering and keyboard nav
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // Important to prevent blur from closing popover before click is processed
+                    console.log(`[Combobox] CommandItem onMouseDown triggered for value: ${String(option.value)}`);
+                    handleItemSelect(option.value); // Pass the original option.value
+                  }}
+                  // Removed onSelect and Command's onValueChange as they were not reliably firing
                 >
                   <Check
                     className={cn(
