@@ -54,47 +54,50 @@ export function RecordEditor({
   const columns = tableSchema.columns;
 
   React.useEffect(() => {
-    if (!isOpen || !columns) return;
+    // Diagnostic log: Display the columns array received by the RecordEditor
+    console.log("[RecordEditor] Received columns:", JSON.stringify(columns, null, 2));
+
+    if (!isOpen || !columns) {
+      console.log("[RecordEditor] useEffect skipped: isOpen is false or columns are not defined.");
+      return;
+    }
 
     const fetchFkData = async () => {
       for (const col of columns) {
         if (col.foreign_key_table && col.foreign_key_column) {
+          console.log(`[RecordEditor] Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
             const displayColumnCandidates = ['name', 'title', 'label', 'description'];
             let selectQuery = ""; 
             let fetchedSuccessfullyWithDisplayName = false;
 
-            console.log(`Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
-
             for (const candidate of displayColumnCandidates) {
               if (candidate === col.foreign_key_column) continue; 
               try {
-                // Test if this candidate column exists and provides usable data
+                console.log(`[RecordEditor] Attempting to use candidate display column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}'.`);
                 const { data: testData, error: testError } = await supabaseClient
                   .from(col.foreign_key_table)
-                  .select(`${col.foreign_key_column}, ${candidate}`) // Fetch both actual FK col and candidate
+                  .select(`${col.foreign_key_column}, ${candidate}`) 
                   .limit(1); 
 
                 if (testError) {
-                  console.warn(`Attempt to use candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' failed during query: ${testError.message}`);
+                  console.warn(`[RecordEditor] Test query for candidate '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' failed: ${testError.message}`);
                   continue; 
                 }
 
                 if (testData && testData.length > 0 && testData[0] && 
                     (testData[0][candidate] !== null && testData[0][candidate] !== undefined && String(testData[0][candidate]).trim() !== '')) {
-                  // Candidate column exists and has a non-null, non-empty value in at least one row
                   selectQuery = `${col.foreign_key_column} as value, ${candidate} as label`;
                   fetchedSuccessfullyWithDisplayName = true;
-                  console.log(`Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
+                  console.log(`[RecordEditor] Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
                   break; 
                 } else {
-                  console.warn(`Candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' exists but returned null, undefined, or empty for the test row.`);
+                  console.warn(`[RecordEditor] Candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' exists but returned null, undefined, or empty for the test row.`);
                 }
               } catch (e: any) {
-                // This catch handles errors within the loop for a specific candidate
                 console.warn(
-                  `Error during attempt to validate candidate '${candidate}' as display column for FK '${col.column_name}' on table '${col.foreign_key_table}'. Error: ${e.message || JSON.stringify(e)}`
+                  `[RecordEditor] Error during attempt to validate candidate '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}'. Error: ${e.message || JSON.stringify(e)}`
                 );
               }
             }
@@ -102,7 +105,7 @@ export function RecordEditor({
             if (!fetchedSuccessfullyWithDisplayName) {
               selectQuery = `${col.foreign_key_column} as value, ${col.foreign_key_column} as label`;
               console.log(
-                `Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
+                `[RecordEditor] Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
               );
             }
 
@@ -112,22 +115,25 @@ export function RecordEditor({
               .limit(200); 
 
             if (error) {
-              console.error(`Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "${selectQuery}": ${error.message}`);
+              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "${selectQuery}": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
+              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'.`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: data as FkOption[] || [] }));
             }
-          } catch (error: any) { // Outer catch for the entire FK processing for this column
-            console.error(`Outer error processing FK options for column '${col.column_name}': ${error.message || JSON.stringify(error)}`);
+          } catch (error: any) { 
+            console.error(`[RecordEditor] Outer error processing FK options for column '${col.column_name}': ${error.message || JSON.stringify(error)}`);
             setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
           } finally {
             setFkLoading(prev => ({ ...prev, [col.column_name]: false }));
           }
+        } else {
+          // console.log(`[RecordEditor] Column '${col.column_name}' is not a foreign key or FK info is missing.`);
         }
       }
     };
     fetchFkData();
-  }, [isOpen, columns, supabaseClient, tableSchema.name]); // Added tableSchema.name to dep array if columns instance can change per table
+  }, [isOpen, columns, supabaseClient, tableSchema.name]);
 
 
   if (!record) return null;
