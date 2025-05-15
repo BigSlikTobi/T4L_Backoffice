@@ -52,23 +52,32 @@ export default function HomePage() {
           tableNamesData.map(async (table: { table_name: string }) => {
             let columns: string[] = [];
             
-            // Try to get columns from a sample row first
             const { data: sampleRowData, error: sampleRowError } = await supabase
               .from(table.table_name)
               .select('*')
               .limit(1)
               .maybeSingle();
 
-            // PGRST116: "The result contains 0 rows". This is not an error for schema inference if table is empty.
-            if (sampleRowError && sampleRowError.code !== 'PGRST116') { 
-              console.warn(`Could not fetch sample row for table ${table.table_name} to infer columns (error code: ${sampleRowError.code}): ${sampleRowError.message || JSON.stringify(sampleRowError)}. Will attempt fallback to RPC.`);
-              // Don't throw, allow fallback to RPC
+            if (sampleRowError) {
+              if (sampleRowError.code === 'PGRST116') {
+                // This is expected for empty tables, log for info and proceed.
+                console.info(`Table '${table.table_name}' is empty (PGRST116), attempting to get columns via RPC.`);
+              } else if (typeof sampleRowError === 'object' && sampleRowError !== null && !sampleRowError.message && Object.keys(sampleRowError).length === 0) {
+                // Empty error object from sample row fetch - this is problematic.
+                // Throw a specific error to be caught by Promise.all and then the main catch.
+                throw new Error(`Failed to fetch a sample row for table '${table.table_name}' to infer schema. Supabase returned an empty error object. Check table permissions and network logs.`);
+              } else {
+                // Some other error fetching sample row.
+                const sampleErrorMsg = sampleRowError.message || JSON.stringify(sampleRowError);
+                console.warn(`Could not fetch sample row for table ${table.table_name} (code: ${sampleRowError.code}): ${sampleErrorMsg}. Will attempt fallback to RPC for columns.`);
+                // We allow fallback, but if this error was the one to propagate as {}, it would be an issue.
+                // By throwing on *empty object* above, we cover that.
+              }
             }
             
             if (sampleRowData && Object.keys(sampleRowData).length > 0) {
               columns = Object.keys(sampleRowData);
             } else {
-                // Fallback to RPC if no sample data or if sampleRowError occurred (and wasn't PGRST116 and didn't yield columns)
                 const { data: columnData, error: columnErrorRpc } = await supabase
                 .rpc('get_table_columns_info', { p_table_name: table.table_name });
 
@@ -76,29 +85,29 @@ export default function HomePage() {
                     const errorDetail = columnErrorRpc.message || JSON.stringify(columnErrorRpc);
                     const errorMsg = `Failed to get column info for table '${table.table_name}' using 'get_table_columns_info' RPC. Error: ${errorDetail}. Check RPC definition/permissions and Supabase logs.`;
                     console.error(errorMsg, columnErrorRpc); 
+                    if (typeof columnErrorRpc === 'object' && columnErrorRpc !== null && !columnErrorRpc.message && Object.keys(columnErrorRpc).length === 0) {
+                        throw new Error(`Failed to get column info for table '${table.table_name}' using 'get_table_columns_info' RPC. Supabase returned an empty error object. Please verify the RPC function in your Supabase dashboard and check network logs.`);
+                    }
                     throw new Error(errorMsg); 
                 } else if (columnData && columnData.map((col: { column_name: string }) => col.column_name).length > 0) {
                     columns = columnData.map((col: { column_name: string }) => col.column_name);
                 } else {
-                    console.warn(`No columns found for table '${table.table_name}' via sample row or 'get_table_columns_info' RPC. The table might be empty, or the RPC returned no column data (which could be valid for empty tables without explicit column definitions in the RPC).`);
-                    // Default to ['id'] if no columns could be determined.
-                    // This might happen for completely empty tables with no direct column info from RPC.
+                    console.warn(`No columns found for table '${table.table_name}' via sample row or 'get_table_columns_info' RPC. The table might be empty, or the RPC returned no column data.`);
                 }
             }
             
             if (columns.length === 0) {
                 console.warn(`Unable to determine columns for table '${table.table_name}'. Defaulting to ['id']. Ensure the table is not empty or the 'get_table_columns_info' RPC can provide column names for empty tables.`);
-                columns = ['id']; // Fallback if no columns found by any method
+                columns = ['id']; 
             }
             
             return { name: table.table_name, columns };
           })
         );
       }
-      // Filter out any tables that might have ended up null or with no columns after processing
       setTables(fetchedTables.filter(t => t && t.columns && t.columns.length > 0));
     } catch (error: any) {
-      console.error("Raw error caught in fetchTables:", error);
+      console.error("Raw error caught in fetchTables:", error); // Line 101
       console.error("Type of error in fetchTables:", typeof error, "Is Error instance:", error instanceof Error);
 
       let detailMessage = "An unknown error occurred while fetching table schemas.";
@@ -121,7 +130,7 @@ export default function HomePage() {
             if (keys.length > 0) {
               detailMessage = `Received error object with keys: [${keys.join(', ')}]. Values might be empty or non-stringifiable. Check browser console for the full object.`;
             } else {
-              detailMessage = "Received an empty or uninformative error object. This often indicates an issue with the 'get_public_tables' or 'get_table_columns_info' RPC functions (e.g., they don't exist, have permission issues, or an internal error) or a network problem. Please verify these RPC functions in your Supabase dashboard and check the browser's network tab for the exact response from the server.";
+              detailMessage = "Received an empty or uninformative error object. This often indicates an issue with the 'get_public_tables' or 'get_table_columns_info' RPC functions (e.g., they don't exist, have permission issues, or an internal error), a problem fetching sample data for a table, or a network problem. Please verify these RPC functions in your Supabase dashboard and check the browser's network tab for the exact response from the server.";
             }
           }
         }
@@ -143,43 +152,9 @@ export default function HomePage() {
 
 
   React.useEffect(() => {
-    // Create RPC functions in Supabase SQL editor if they don't exist:
-    /*
-    -- Function to get table names from public schema
-    CREATE OR REPLACE FUNCTION get_public_tables()
-    RETURNS TABLE(table_name TEXT) AS $$
-    BEGIN
-        RETURN QUERY
-        SELECT c.relname::text FROM pg_catalog.pg_class c
-        LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind = 'r' -- 'r' for ordinary table
-          AND n.nspname = 'public' -- Only from public schema
-          AND c.relname NOT LIKE 'pg_%' AND c.relname NOT LIKE 'sql_%' -- Exclude system tables
-        ORDER BY c.relname;
-    END;
-    $$ LANGUAGE plpgsql;
-
-    -- Function to get column names for a specific table
-    -- This version attempts to return column names even for empty tables by querying information_schema.
-    CREATE OR REPLACE FUNCTION get_table_columns_info(p_table_name TEXT)
-    RETURNS TABLE(column_name TEXT, data_type TEXT, ordinal_position INTEGER) AS $$
-    BEGIN
-        RETURN QUERY
-        SELECT
-            isc.column_name::text,
-            isc.data_type::text,
-            isc.ordinal_position::integer
-        FROM information_schema.columns isc
-        WHERE isc.table_schema = 'public'
-          AND isc.table_name = p_table_name
-        ORDER BY isc.ordinal_position;
-    END;
-    $$ LANGUAGE plpgsql;
-    */
     fetchTables();
   }, [fetchTables]);
 
-  // Fetch data for the selected table
   const fetchTableData = React.useCallback(async (tableName: string) => {
     setIsLoadingData(true);
     setDataError(null);
@@ -194,12 +169,12 @@ export default function HomePage() {
           title: "Error Loading Data",
           description: `Failed to load data for table '${tableName}': ${errorDetail}`,
         });
-        setTableData(null); // Clear previous data on error
-        return []; // Return empty array to satisfy type, error is handled
+        setTableData(null); 
+        return []; 
       }
       setTableData(data || []);
       return data || [];
-    } catch (e: any) { // Catch any other unexpected errors
+    } catch (e: any) { 
         const errorDetail = e.message || JSON.stringify(e);
         setDataError(`An unexpected error occurred while loading data for table ${tableName}: ${errorDetail}`);
         toast({
@@ -221,8 +196,7 @@ export default function HomePage() {
     setCurrentTableSchema(schema);
     setTableData(null); 
     setDataError(null);
-    // setIsLoadingData is handled by fetchTableData now
-    fetchTableData(tableName); // Call fetchTableData which handles its own loading state
+    fetchTableData(tableName); 
   }, [tables, fetchTableData]);
 
   const handleOpenEditor = (record: Record<string, any>) => {
@@ -241,7 +215,6 @@ export default function HomePage() {
     setEditingRecord(prev => prev ? { ...prev, [fieldName]: value } : null);
   };
 
-  // Update a record in Supabase
   const handleSaveRecord = async (updatedRecord: Record<string, any>) => {
     if (!selectedTableName || !updatedRecord.id) { 
       toast({
@@ -302,7 +275,7 @@ export default function HomePage() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <AppHeader selectedTableName={selectedTableName} />
         <main className="flex-1 overflow-x-auto overflow-y-auto p-6 space-y-6">
-          {!selectedTableName && isLoadingTables && ( // Show loading skeleton for tables only when tables are loading
+          {!selectedTableName && isLoadingTables && ( 
              <div className="space-y-2 p-2">
                 <Skeleton className="h-8 w-3/4 mb-3 rounded-md" />
                 {[...Array(3)].map((_, i) => (
@@ -331,7 +304,7 @@ export default function HomePage() {
               </AlertDescription>
             </Alert>
           )}
-          {selectedTableName && isLoadingData && ( // Show loading skeleton for data only when a table is selected and data is loading
+          {selectedTableName && isLoadingData && ( 
             <div className="space-y-4">
               <Skeleton className="h-12 w-full rounded-md" />
               {[...Array(5)].map((_, i) => (
@@ -339,7 +312,7 @@ export default function HomePage() {
               ))}
             </div>
           )}
-          {selectedTableName && dataError && !isLoadingData && ( // Show data error only when a table is selected
+          {selectedTableName && dataError && !isLoadingData && ( 
              <Alert variant="destructive" className="max-w-2xl mx-auto">
               <Terminal className="h-4 w-4" />
               <AlertTitle>Error Loading Table Data</AlertTitle>
@@ -373,3 +346,37 @@ export default function HomePage() {
   );
 }
 
+/*
+SQL for Supabase RPC functions (run in Supabase SQL Editor):
+
+-- Function to get table names from public schema
+CREATE OR REPLACE FUNCTION get_public_tables()
+RETURNS TABLE(table_name TEXT) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT c.relname::text FROM pg_catalog.pg_class c
+    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relkind = 'r' -- 'r' for ordinary table
+      AND n.nspname = 'public' -- Only from public schema
+      AND c.relname NOT LIKE 'pg_%' AND c.relname NOT LIKE 'sql_%' -- Exclude system tables
+    ORDER BY c.relname;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get column names and types for a specific table
+CREATE OR REPLACE FUNCTION get_table_columns_info(p_table_name TEXT)
+RETURNS TABLE(column_name TEXT, data_type TEXT, ordinal_position INTEGER) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        isc.column_name::text,
+        isc.data_type::text,
+        isc.ordinal_position::integer
+    FROM information_schema.columns isc
+    WHERE isc.table_schema = 'public'
+      AND isc.table_name = p_table_name
+    ORDER BY isc.ordinal_position;
+END;
+$$ LANGUAGE plpgsql;
+
+*/
