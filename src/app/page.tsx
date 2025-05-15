@@ -530,7 +530,9 @@ BEGIN
       AND isc.table_name = p_table_name
     ORDER BY isc.ordinal_position;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SECURITY DEFINER; -- Added SECURITY DEFINER
 
 */
+
+
 
