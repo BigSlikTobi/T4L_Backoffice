@@ -16,8 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox"; // Import Combobox
 import type { TableSchema, ColumnDetail } from "@/data/mock-data"; 
 
 interface RecordEditorProps {
@@ -32,11 +32,6 @@ interface RecordEditorProps {
   supabaseClient: SupabaseClient; 
 }
 
-interface FkOption {
-  value: string | number | null; 
-  label: string;
-}
-
 export function RecordEditor({
   record,
   tableSchema,
@@ -48,17 +43,17 @@ export function RecordEditor({
   isNewRecord,
   supabaseClient
 }: RecordEditorProps) {
-  const [fkOptions, setFkOptions] = React.useState<Record<string, FkOption[]>>({});
+  const [fkOptions, setFkOptions] = React.useState<Record<string, ComboboxOption[]>>({});
   const [fkLoading, setFkLoading] = React.useState<Record<string, boolean>>({});
 
   React.useEffect(() => {
     if (!isOpen || !tableSchema || !tableSchema.columns) {
       console.log("[RecordEditor] useEffect skipped: isOpen is false or tableSchema/columns are not defined.");
-      setFkOptions({}); // Clear options if editor is closed or schema is invalid
+      setFkOptions({}); 
       return;
     }
     const columns = tableSchema.columns;
-    console.log("[RecordEditor] Received columns:", JSON.stringify(columns, null, 2));
+    console.log(`[RecordEditor] Received columns for table '${tableSchema.name}':`, JSON.stringify(columns, null, 2));
 
     const fetchFkData = async () => {
       for (const col of columns) {
@@ -66,41 +61,45 @@ export function RecordEditor({
           console.log(`[RecordEditor] Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
-            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' with query: "select(*)"`);
-
-            const { data, error } = await supabaseClient
+            
+            const query = supabaseClient
               .from(col.foreign_key_table)
-              .select('*') // Fetch all columns
-              .limit(200); 
+              .select('*') 
+              .limit(200);
+
+            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' using query: select(*)`);
+            
+            const { data, error } = await query;
 
             if (error) {
               console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(*)": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
-              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to FkOption format.`);
-              const mappedOptions: FkOption[] = (data || []).map(item => {
-                const optionValue = item[col.foreign_key_column!]; // Assert not null as FK column is known
+              console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to ComboboxOption format.`);
+              
+              const mappedOptions: ComboboxOption[] = (data || []).map(item => {
+                const optionValue = item[col.foreign_key_column!]; 
                 
                 const labelParts: string[] = [];
-                
-                // Iterate over all properties of the fetched item (all columns of the foreign table row)
                 for (const key in item) {
-                    if (item.hasOwnProperty(key)) {
-                        const value = item[key];
-                        // Exclude typical metadata columns like 'created_at', 'updated_at' from the composite label
-                        if (key.endsWith('_at')) {
-                            continue;
+                    if (Object.prototype.hasOwnProperty.call(item, key)) {
+                        const val = item[key];
+                        if (key.endsWith('_at') || key === col.foreign_key_column && Object.keys(item).length > 1) { // Exclude timestamps and the FK ID itself if other fields exist
+                            if (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length <= 1) {
+                                // keep fk id in label if it's the only non-timestamp field
+                            } else {
+                                continue;
+                            }
                         }
-                        
-                        if (value !== null && value !== undefined && String(value).trim() !== '') {
-                            labelParts.push(String(value));
+                        if (val !== null && val !== undefined && String(val).trim() !== '') {
+                            labelParts.push(String(val));
                         }
                     }
                 }
                 
                 let tempLabel = labelParts.join(' | '); 
-                if (labelParts.length === 0) { // Fallback if all parts were empty or skipped
-                    tempLabel = String(optionValue); // Default to the ID if no other info
+                if (labelParts.length === 0) { 
+                    tempLabel = String(optionValue); 
                 }
 
                 const MAX_LABEL_LENGTH = 80; 
@@ -108,6 +107,12 @@ export function RecordEditor({
                 if (tempLabel.length > MAX_LABEL_LENGTH) {
                     finalLabel = tempLabel.substring(0, MAX_LABEL_LENGTH - 3) + "...";
                 }
+                if (Object.keys(item).length > 1 && !finalLabel.includes(String(optionValue))) {
+                    finalLabel = `${finalLabel} (ID: ${optionValue})`;
+                } else if (Object.keys(item).length === 1) {
+                    finalLabel = `ID: ${optionValue}`;
+                }
+
 
                 return {
                   value: optionValue,
@@ -205,6 +210,9 @@ export function RecordEditor({
 
 
               if (col.foreign_key_table && col.foreign_key_column) {
+                const currentFKValue = record[colName];
+                const optionsForFK = fkOptions[colName] || [];
+                
                 return (
                   <div key={colName} className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor={colName} className="text-right">
@@ -213,28 +221,24 @@ export function RecordEditor({
                     {fkLoading[colName] ? (
                       <Skeleton className="h-10 w-full col-span-3" />
                     ) : (
-                      <Select
-                        value={record[colName] !== null && record[colName] !== undefined ? String(record[colName]) : ""}
-                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : (col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double') ? Number(value) : value) )} 
+                      <Combobox
+                        options={optionsForFK}
+                        value={currentFKValue}
+                        onChange={(selectedValue) => {
+                           let finalValue = selectedValue;
+                           if (selectedValue !== null && (col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double'))) {
+                               finalValue = Number(selectedValue);
+                           }
+                           onFieldChange(colName, finalValue);
+                        }}
+                        placeholder={`Select ${getColumnLabel(col.foreign_key_table)}...`}
+                        searchPlaceholder="Search..."
+                        emptyText="No options found."
                         disabled={isReadOnly}
-                      >
-                        <SelectTrigger className="col-span-3">
-                          <SelectValue placeholder={`Select ${getColumnLabel(col.foreign_key_table)}...`} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {col.is_nullable === 'YES' && (
-                            <SelectItem value="NULL_VALUE_PLACEHOLDER">-- None --</SelectItem>
-                          )}
-                          {(fkOptions[colName] || []).map(option => (
-                            <SelectItem key={String(option.value)} value={String(option.value)}>
-                              {option.label} {String(option.value) !== String(option.label) && option.value !== null && !option.label.includes(String(option.value)) ? `(${option.value})` : ''}
-                            </SelectItem>
-                          ))}
-                           {(!fkOptions[colName] || fkOptions[colName].length === 0) && col.is_nullable !== 'YES' && (
-                            <SelectItem value="" disabled>No options found</SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
+                        triggerClassName="col-span-3"
+                        allowNull={col.is_nullable === 'YES'}
+                        nullLabel={`-- None (${getColumnLabel(colName)}) --`}
+                      />
                     )}
                   </div>
                 );
@@ -251,7 +255,14 @@ export function RecordEditor({
                     id={colName}
                     type={fieldType}
                     value={formatFieldValue(record[colName], fieldType)}
-                    onChange={(e) => onFieldChange(colName, e.target.valueAsNumber && fieldType === 'number' ? e.target.valueAsNumber : e.target.value)}
+                    onChange={(e) => {
+                        let val: string | number = e.target.value;
+                        if (fieldType === 'number') {
+                           val = e.target.valueAsNumber;
+                           if (isNaN(val)) val = e.target.value; // Fallback if not a valid number string
+                        }
+                        onFieldChange(colName, val);
+                    }}
                     className="col-span-3"
                     disabled={isReadOnly}
                     aria-readonly={isReadOnly}
