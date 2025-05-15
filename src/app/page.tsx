@@ -267,6 +267,7 @@ export default function HomePage() {
   };
 
   const handleFieldChangeInEditor = (fieldName: string, value: any) => {
+    console.log(`[HomePage] handleFieldChangeInEditor: fieldName=${fieldName}, value=${value}, type=${typeof value}`);
     setEditingRecord(prev => prev ? { ...prev, [fieldName]: value } : null);
   };
 
@@ -533,6 +534,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER; -- Added SECURITY DEFINER
 
 */
+
 
 
 

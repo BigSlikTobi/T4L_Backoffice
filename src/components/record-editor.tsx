@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Combobox, type ComboboxOption } from "@/components/ui/combobox"; // Import Combobox
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox"; 
 import type { TableSchema, ColumnDetail } from "@/data/mock-data"; 
 
 interface RecordEditorProps {
@@ -48,7 +48,6 @@ export function RecordEditor({
 
   React.useEffect(() => {
     if (!isOpen || !tableSchema || !tableSchema.columns) {
-      console.log("[RecordEditor] useEffect skipped: isOpen is false or tableSchema/columns are not defined.");
       setFkOptions({}); 
       return;
     }
@@ -62,17 +61,16 @@ export function RecordEditor({
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
             
-            const query = supabaseClient
+            const selectQuery = '*'; // Fetch all columns
+            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' using query: select(${selectQuery})`);
+            
+            const { data, error } = await supabaseClient
               .from(col.foreign_key_table)
-              .select('*') 
+              .select(selectQuery) 
               .limit(200);
 
-            console.log(`[RecordEditor] Constructing FK select for '${col.column_name}' on table '${col.foreign_key_table}' using query: select(*)`);
-            
-            const { data, error } = await query;
-
             if (error) {
-              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(*)": ${error.message}`);
+              console.error(`[RecordEditor] Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "select(${selectQuery})": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
               console.log(`[RecordEditor] Fetched ${data?.length || 0} options for FK '${col.column_name}'. Mapping to ComboboxOption format.`);
@@ -84,12 +82,13 @@ export function RecordEditor({
                 for (const key in item) {
                     if (Object.prototype.hasOwnProperty.call(item, key)) {
                         const val = item[key];
-                        if (key.endsWith('_at') || key === col.foreign_key_column && Object.keys(item).length > 1) { // Exclude timestamps and the FK ID itself if other fields exist
-                            if (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length <= 1) {
+                        // Exclude metadata timestamps and the FK ID itself if other fields exist to form the label
+                        if (key.endsWith('_at') || (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length > 1) ) {
+                           if (key === col.foreign_key_column && Object.keys(item).filter(k => !k.endsWith('_at')).length <= 1) {
                                 // keep fk id in label if it's the only non-timestamp field
-                            } else {
-                                continue;
-                            }
+                           } else {
+                               continue;
+                           }
                         }
                         if (val !== null && val !== undefined && String(val).trim() !== '') {
                             labelParts.push(String(val));
@@ -98,24 +97,23 @@ export function RecordEditor({
                 }
                 
                 let tempLabel = labelParts.join(' | '); 
-                if (labelParts.length === 0) { 
-                    tempLabel = String(optionValue); 
+                if (labelParts.length === 0 || (labelParts.length === 1 && labelParts[0] === String(optionValue))) { 
+                    // If no other parts or only the ID itself is found, ensure ID is clearly labeled.
+                    tempLabel = `ID: ${optionValue}`; 
+                } else if (Object.keys(item).length > 1 && !tempLabel.includes(String(optionValue)) && col.foreign_key_column && item[col.foreign_key_column!] !== undefined) {
+                    // If ID is not already part of the label and there are multiple fields, append it for clarity.
+                    tempLabel = `${tempLabel} (ID: ${optionValue})`;
                 }
+
 
                 const MAX_LABEL_LENGTH = 80; 
                 let finalLabel = tempLabel;
                 if (tempLabel.length > MAX_LABEL_LENGTH) {
                     finalLabel = tempLabel.substring(0, MAX_LABEL_LENGTH - 3) + "...";
                 }
-                if (Object.keys(item).length > 1 && !finalLabel.includes(String(optionValue))) {
-                    finalLabel = `${finalLabel} (ID: ${optionValue})`;
-                } else if (Object.keys(item).length === 1) {
-                    finalLabel = `ID: ${optionValue}`;
-                }
-
 
                 return {
-                  value: optionValue,
+                  value: optionValue, // Original type
                   label: finalLabel,
                 };
               });
@@ -211,6 +209,7 @@ export function RecordEditor({
 
               if (col.foreign_key_table && col.foreign_key_column) {
                 const currentFKValue = record[colName];
+                console.log(`[RecordEditor] Rendering Combobox for ${colName}. currentFKValue: ${currentFKValue}, type: ${typeof currentFKValue}`);
                 const optionsForFK = fkOptions[colName] || [];
                 
                 return (
@@ -223,12 +222,22 @@ export function RecordEditor({
                     ) : (
                       <Combobox
                         options={optionsForFK}
-                        value={currentFKValue}
-                        onChange={(selectedValue) => {
-                           let finalValue = selectedValue;
-                           if (selectedValue !== null && (col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double'))) {
-                               finalValue = Number(selectedValue);
+                        value={currentFKValue} // This is the actual value (e.g., number or string ID)
+                        onChange={(selectedValue) => { // selectedValue from Combobox is original type
+                           let finalValue: any = selectedValue;
+                           if (selectedValue !== null) {
+                             const targetIsNumeric = col.data_type.includes('int') || col.data_type.includes('numeric') || col.data_type.includes('decimal') || col.data_type.includes('real') || col.data_type.includes('double');
+                             if (targetIsNumeric) {
+                               const num = Number(selectedValue);
+                               if (!isNaN(num)) {
+                                 finalValue = num;
+                               } else {
+                                 console.error(`[RecordEditor] Failed to convert selected FK value "${selectedValue}" to number for column ${colName} (type ${col.data_type}). Keeping original: ${selectedValue}`);
+                                 finalValue = selectedValue; // Or consider setting to null or throwing error
+                               }
+                             }
                            }
+                           console.log(`[RecordEditor] onFieldChange for ${colName} with finalValue: ${finalValue} (type: ${typeof finalValue})`);
                            onFieldChange(colName, finalValue);
                         }}
                         placeholder={`Select ${getColumnLabel(col.foreign_key_table)}...`}
@@ -259,7 +268,7 @@ export function RecordEditor({
                         let val: string | number = e.target.value;
                         if (fieldType === 'number') {
                            val = e.target.valueAsNumber;
-                           if (isNaN(val)) val = e.target.value; // Fallback if not a valid number string
+                           if (isNaN(val)) val = e.target.value; 
                         }
                         onFieldChange(colName, val);
                     }}
@@ -285,3 +294,4 @@ export function RecordEditor({
     </Dialog>
   );
 }
+
