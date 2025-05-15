@@ -18,18 +18,18 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { TableSchema, ColumnDetail } from "@/data/mock-data"; // Using ColumnDetail now
+import type { TableSchema, ColumnDetail } from "@/data/mock-data"; 
 
 interface RecordEditorProps {
   record: Record<string, any> | null;
-  tableSchema: TableSchema; // Pass the full schema, which includes ColumnDetail[]
+  tableSchema: TableSchema; 
   isOpen: boolean;
   onClose: () => void;
   onSave: (updatedRecord: Record<string, any>) => void;
   onFieldChange: (fieldName: string, value: any) => void;
   tableName: string;
   isNewRecord: boolean;
-  supabaseClient: SupabaseClient; // For fetching FK options
+  supabaseClient: SupabaseClient; 
 }
 
 interface FkOption {
@@ -61,59 +61,64 @@ export function RecordEditor({
         if (col.foreign_key_table && col.foreign_key_column) {
           setFkLoading(prev => ({ ...prev, [col.column_name]: true }));
           try {
-            // Attempt to find a good display column: 'name', 'title', 'label', then the FK column itself as fallback
             const displayColumnCandidates = ['name', 'title', 'label', 'description'];
-            let selectQuery = `${col.foreign_key_column} as value`;
-            let displayColumn = col.foreign_key_column; // Fallback display
-
-            // Check if common display columns exist in the foreign table
-            // This is a simplified check; ideally, the foreign table's schema would be available
-            // For now, we just try to query them. If it fails, Supabase error will be caught.
-            
-            // To robustly check for display columns, we would need another RPC or fetch schema of foreign table.
-            // Simple approach: try to fetch 'name', if it fails, it won't be used.
-            // A more advanced version could query information_schema for the foreign table's columns.
-            // For this iteration, we'll try fetching 'name', and if not explicitly errors, we use it.
-            // If 'name' column doesn't exist, Supabase *should* error out, or return only 'value'.
-
+            let selectQuery = ""; 
             let fetchedSuccessfullyWithDisplayName = false;
-            for (const candidate of displayColumnCandidates) {
-                if (candidate === col.foreign_key_column) continue; // Already fetching this as 'value'
-                try {
-                    const { data, error } = await supabaseClient
-                        .from(col.foreign_key_table)
-                        .select(`${col.foreign_key_column} as value, ${candidate} as label`)
-                        .limit(200); // Limit for dropdowns
-                    if (error) throw error;
-                    if (data && data.length > 0 && data[0].label !== undefined) {
-                        selectQuery = `${col.foreign_key_column} as value, ${candidate} as label`;
-                        displayColumn = candidate;
-                        fetchedSuccessfullyWithDisplayName = true;
-                        break;
-                    }
-                } catch (e) {
-                    // console.warn(`Could not use '${candidate}' as display column for ${col.foreign_key_table}.${col.column_name}`);
-                }
-            }
-             if (!fetchedSuccessfullyWithDisplayName) {
-                // Fallback to just using the ID as label if no good display name was found
-                 selectQuery = `${col.foreign_key_column} as value, ${col.foreign_key_column} as label`;
-             }
 
+            console.log(`Processing FK: ${col.column_name} -> ${col.foreign_key_table}(${col.foreign_key_column})`);
+
+            for (const candidate of displayColumnCandidates) {
+              if (candidate === col.foreign_key_column) continue; 
+              try {
+                // Test if this candidate column exists and provides usable data
+                const { data: testData, error: testError } = await supabaseClient
+                  .from(col.foreign_key_table)
+                  .select(`${col.foreign_key_column}, ${candidate}`) // Fetch both actual FK col and candidate
+                  .limit(1); 
+
+                if (testError) {
+                  console.warn(`Attempt to use candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' failed during query: ${testError.message}`);
+                  continue; 
+                }
+
+                if (testData && testData.length > 0 && testData[0] && 
+                    (testData[0][candidate] !== null && testData[0][candidate] !== undefined && String(testData[0][candidate]).trim() !== '')) {
+                  // Candidate column exists and has a non-null, non-empty value in at least one row
+                  selectQuery = `${col.foreign_key_column} as value, ${candidate} as label`;
+                  fetchedSuccessfullyWithDisplayName = true;
+                  console.log(`Successfully selected '${candidate}' as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'.`);
+                  break; 
+                } else {
+                  console.warn(`Candidate column '${candidate}' for FK '${col.column_name}' on table '${col.foreign_key_table}' exists but returned null, undefined, or empty for the test row.`);
+                }
+              } catch (e: any) {
+                // This catch handles errors within the loop for a specific candidate
+                console.warn(
+                  `Error during attempt to validate candidate '${candidate}' as display column for FK '${col.column_name}' on table '${col.foreign_key_table}'. Error: ${e.message || JSON.stringify(e)}`
+                );
+              }
+            }
+            
+            if (!fetchedSuccessfullyWithDisplayName) {
+              selectQuery = `${col.foreign_key_column} as value, ${col.foreign_key_column} as label`;
+              console.log(
+                `Falling back to ID ('${col.foreign_key_column}') as display column for FK '${col.column_name}' referencing '${col.foreign_key_table}'. Tried candidates: ${displayColumnCandidates.join(', ')}.`
+              );
+            }
 
             const { data, error } = await supabaseClient
               .from(col.foreign_key_table)
-              .select(selectQuery)
-              .limit(200); // Sensible limit for dropdown options
+              .select(selectQuery) 
+              .limit(200); 
 
             if (error) {
-              console.error(`Failed to fetch FK options for ${col.column_name} from ${col.foreign_key_table}:`, error);
+              console.error(`Failed to fetch FK options for '${col.column_name}' from '${col.foreign_key_table}' using query "${selectQuery}": ${error.message}`);
               setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
             } else {
               setFkOptions(prev => ({ ...prev, [col.column_name]: data as FkOption[] || [] }));
             }
-          } catch (error) {
-            console.error(`Error processing FK options for ${col.column_name}:`, error);
+          } catch (error: any) { // Outer catch for the entire FK processing for this column
+            console.error(`Outer error processing FK options for column '${col.column_name}': ${error.message || JSON.stringify(error)}`);
             setFkOptions(prev => ({ ...prev, [col.column_name]: [] }));
           } finally {
             setFkLoading(prev => ({ ...prev, [col.column_name]: false }));
@@ -122,7 +127,7 @@ export function RecordEditor({
       }
     };
     fetchFkData();
-  }, [isOpen, columns, supabaseClient]);
+  }, [isOpen, columns, supabaseClient, tableSchema.name]); // Added tableSchema.name to dep array if columns instance can change per table
 
 
   if (!record) return null;
@@ -132,10 +137,9 @@ export function RecordEditor({
   };
 
   const getFieldType = (column: ColumnDetail): string => {
-    // Basic type detection, can be expanded
     const dataType = column.data_type.toLowerCase();
     if (dataType.includes('timestamp') || dataType.includes('date')) return 'datetime-local';
-    if (dataType.includes('bool')) return 'checkbox'; // Assuming 'checkbox' handles boolean
+    if (dataType.includes('bool')) return 'checkbox'; 
     if (dataType.includes('int') || dataType.includes('numeric') || dataType.includes('decimal') || dataType.includes('real') || dataType.includes('double')) return 'number';
     return 'text';
   }
@@ -143,9 +147,8 @@ export function RecordEditor({
   const formatFieldValue = (value: any, type: string): string => {
     if (type === 'datetime-local' && value) {
       try {
-        // Ensure it's a valid date before formatting
         const date = new Date(value);
-        if (isNaN(date.getTime())) return String(value); // Return original if invalid date
+        if (isNaN(date.getTime())) return String(value); 
         return date.toISOString().slice(0, 16);
       } catch (e) {
         return String(value); 
@@ -164,7 +167,7 @@ export function RecordEditor({
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>
-            {isNewRecord ? "Create New Record" : `Edit Record`} {/* ID might not be available or reliable here if composite */}
+            {isNewRecord ? "Create New Record" : `Edit Record`} 
           </DialogTitle>
           <DialogDescription>
             {isNewRecord 
@@ -180,16 +183,11 @@ export function RecordEditor({
               const isAutoManagedTimestamp = colName.toLowerCase().endsWith('_at') && 
                                            (col.data_type.includes('timestamp') || col.data_type.includes('timestamptz'));
               
-              const isReadOnly = (col.is_primary_key && !isNewRecord) || // PKs on existing records
-                                 (col.is_primary_key && isNewRecord && col.data_type.toLowerCase() === 'uuid') || // Auto-gen UUID PKs on new
-                                 isAutoManagedTimestamp; // created_at, updated_at
+              const isReadOnly = (col.is_primary_key && !isNewRecord) || 
+                                 (col.is_primary_key && isNewRecord && col.data_type.toLowerCase() === 'uuid') || 
+                                 isAutoManagedTimestamp; 
 
-              if (isNewRecord && col.is_primary_key && col.data_type.toLowerCase() !== 'uuid') {
-                // If PK is not auto-gen UUID for new record, it might be user-supplied (e.g. email as PK)
-                // or a serial that will be generated by DB. For now, allow input if not UUID.
-                // This logic can be refined based on specific PK strategies.
-              }
-               if (isNewRecord && col.is_primary_key && col.data_type.toLowerCase() === 'uuid') {
+              if (isNewRecord && col.is_primary_key && col.data_type.toLowerCase() === 'uuid') {
                  return (
                     <div key={colName} className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor={colName} className="text-right">
@@ -218,7 +216,7 @@ export function RecordEditor({
                     ) : (
                       <Select
                         value={record[colName] !== null && record[colName] !== undefined ? String(record[colName]) : ""}
-                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : value)} // Handle explicit null option
+                        onValueChange={(value) => onFieldChange(colName, value === "NULL_VALUE_PLACEHOLDER" ? null : value)} 
                         disabled={isReadOnly}
                       >
                         <SelectTrigger className="col-span-3">
@@ -230,7 +228,7 @@ export function RecordEditor({
                           )}
                           {(fkOptions[colName] || []).map(option => (
                             <SelectItem key={option.value} value={String(option.value)}>
-                              {option.label} {option.value !== option.label ? `(${option.value})` : ''}
+                              {option.label} {String(option.value) !== String(option.label) ? `(${option.value})` : ''}
                             </SelectItem>
                           ))}
                            {(!fkOptions[colName] || fkOptions[colName].length === 0) && col.is_nullable !== 'YES' && (
@@ -277,3 +275,4 @@ export function RecordEditor({
     </Dialog>
   );
 }
+
