@@ -12,7 +12,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Terminal, XSquare } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Terminal, XSquare, SearchIcon } from "lucide-react";
 
 export default function HomePage() {
   const [tables, setTables] = React.useState<TableSchema[]>([]);
@@ -24,6 +25,7 @@ export default function HomePage() {
   const [tableData, setTableData] = React.useState<Record<string, any>[] | null>(null);
   const [isLoadingData, setIsLoadingData] = React.useState(false);
   const [dataError, setDataError] = React.useState<string | null>(null);
+  const [searchTermLeft, setSearchTermLeft] = React.useState<string>("");
 
   // Right Panel State
   const [selectedTableNameRight, setSelectedTableNameRight] = React.useState<string | null>(null);
@@ -31,6 +33,7 @@ export default function HomePage() {
   const [tableDataRight, setTableDataRight] = React.useState<Record<string, any>[] | null>(null);
   const [isLoadingDataRight, setIsLoadingDataRight] = React.useState(false);
   const [dataErrorRight, setDataErrorRight] = React.useState<string | null>(null);
+  const [searchTermRight, setSearchTermRight] = React.useState<string>("");
 
   // Editor State (currently targets left panel by default)
   const [selectedRecord, setSelectedRecord] = React.useState<Record<string, any> | null>(null);
@@ -253,12 +256,13 @@ export default function HomePage() {
     }
   }, [toast]);
 
-  const handleSelectTable = React.useCallback(async (tableName: string) => { // Targets left panel
+  const handleSelectTable = React.useCallback(async (tableName: string) => { 
     setSelectedTableName(tableName);
     const schema = tables.find(t => t.name === tableName) || null;
     setCurrentTableSchema(schema);
     setTableData(null); 
     setDataError(null);
+    setSearchTermLeft(""); // Reset search term for new table
     fetchDataForPanel(tableName, 'left'); 
   }, [tables, fetchDataForPanel]);
 
@@ -268,6 +272,7 @@ export default function HomePage() {
     setCurrentTableSchemaRight(schema);
     setTableDataRight(null);
     setDataErrorRight(null);
+    setSearchTermRight(""); // Reset search term for new table
     fetchDataForPanel(tableName, 'right');
   }, [tables, fetchDataForPanel]);
 
@@ -277,9 +282,9 @@ export default function HomePage() {
     setTableDataRight(null);
     setDataErrorRight(null);
     setIsLoadingDataRight(false);
+    setSearchTermRight("");
   };
 
-  // Editing functions currently target left panel's context
   const handleOpenEditor = (record: Record<string, any>) => {
     setSelectedRecord(record);
     setEditingRecord({ ...record });
@@ -288,7 +293,7 @@ export default function HomePage() {
   };
   
   const handleOpenNewRecordEditor = () => {
-    if (!currentTableSchema) return; // Operates on left panel's schema
+    if (!currentTableSchema) return;
 
     const newRecordScaffold = currentTableSchema.columns.reduce((acc, col) => {
       if (col.is_primary_key || col.column_name.toLowerCase().endsWith('_at')) {
@@ -317,7 +322,6 @@ export default function HomePage() {
   };
 
   const handleSaveRecord = async (recordToSave: Record<string, any>) => {
-    // This function currently saves to the left panel's selected table
     if (!selectedTableName || !currentTableSchema) { 
       toast({
         variant: "destructive",
@@ -359,7 +363,7 @@ export default function HomePage() {
         if (error) throw error;
 
         if (newRecordData) {
-          setTableData(prevData => prevData ? [newRecordData, ...prevData] : [newRecordData]); // Updates left panel data
+          setTableData(prevData => prevData ? [newRecordData, ...prevData] : [newRecordData]); 
           toast({
             title: "Success!",
             description: `New record created in '${selectedTableName}'.`,
@@ -397,7 +401,7 @@ export default function HomePage() {
         if (error) throw error;
 
         if (savedRecord) {
-          setTableData(prevData =>  // Updates left panel data
+          setTableData(prevData =>  
             prevData 
               ? prevData.map(r => {
                   const isMatch = primaryKeyColumns.every(pkCol => r[pkCol.column_name] === savedRecord[pkCol.column_name]);
@@ -425,8 +429,25 @@ export default function HomePage() {
     }
   };
 
+  const filterData = (data: Record<string, any>[] | null, searchTerm: string, columnsToDisplay: string[]): Record<string, any>[] => {
+    if (!data) return [];
+    if (!searchTerm.trim()) return data;
+
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    return data.filter(row => 
+      columnsToDisplay.some(colName => {
+        const cellValue = row[colName];
+        return cellValue !== null && cellValue !== undefined && String(cellValue).toLowerCase().includes(lowerSearchTerm);
+      })
+    );
+  };
+
   const displayColsForLeftTable = currentTableSchema?.displayColumns || currentTableSchema?.columns.map(c => c.column_name) || [];
+  const filteredTableDataLeft = filterData(tableData, searchTermLeft, displayColsForLeftTable);
+
   const displayColsForRightTable = currentTableSchemaRight?.displayColumns || currentTableSchemaRight?.columns.map(c => c.column_name) || [];
+  const filteredTableDataRight = filterData(tableDataRight, searchTermRight, displayColsForRightTable);
+
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
@@ -440,11 +461,11 @@ export default function HomePage() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <AppHeader 
             selectedTableName={selectedTableName} 
-            onAddNewRecord={selectedTableName ? handleOpenNewRecordEditor : undefined} // "Add New" only for left panel
+            onAddNewRecord={selectedTableName ? handleOpenNewRecordEditor : undefined}
         />
         <main className="flex-1 flex overflow-hidden">
           {/* Left Panel */}
-          <div className="flex-1 flex flex-col overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 flex flex-col overflow-y-auto p-6 space-y-4">
             {!selectedTableName && isLoadingTables && ( 
                <div className="space-y-2 p-2">
                   <Skeleton className="h-8 w-3/4 mb-3 rounded-md" />
@@ -474,6 +495,20 @@ export default function HomePage() {
                 </AlertDescription>
               </Alert>
             )}
+
+            {selectedTableName && (
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input 
+                  type="search"
+                  placeholder={`Search in ${selectedTableName}...`}
+                  value={searchTermLeft}
+                  onChange={(e) => setSearchTermLeft(e.target.value)}
+                  className="pl-10 w-full md:w-1/2 lg:w-1/3 shadow-sm"
+                />
+              </div>
+            )}
+
             {selectedTableName && isLoadingData && ( 
               <div className="space-y-4">
                 <Skeleton className="h-12 w-full rounded-md" />
@@ -493,9 +528,9 @@ export default function HomePage() {
             )}
             {!isLoadingData && !dataError && tableData && currentTableSchema && selectedTableName && (
               <DataDisplayTable
-                data={tableData}
+                data={filteredTableDataLeft}
                 columns={displayColsForLeftTable} 
-                onSelectRecord={handleOpenEditor} // Edit actions on left panel
+                onSelectRecord={handleOpenEditor}
                 tableName={selectedTableName}
               />
             )}
@@ -510,13 +545,25 @@ export default function HomePage() {
 
           {/* Right Panel */}
           {selectedTableNameRight && (
-            <div className="flex-1 flex flex-col overflow-y-auto p-6 space-y-6 border-l border-border">
-              <div className="flex justify-between items-center sticky top-0 bg-background py-2 z-10">
+            <div className="flex-1 flex flex-col overflow-y-auto p-6 space-y-4 border-l border-border">
+              <div className="flex justify-between items-center sticky top-0 bg-background py-2 z-10 -mt-2 -mx-6 px-6 pt-4 pb-3 border-b mb-2">
                 <h2 className="text-xl font-semibold text-foreground truncate">{selectedTableNameRight}</h2>
                 <Button variant="ghost" size="icon" onClick={handleCloseRightPanel} aria-label="Close right panel">
                   <XSquare className="h-5 w-5" />
                 </Button>
               </div>
+
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input 
+                  type="search"
+                  placeholder={`Search in ${selectedTableNameRight}...`}
+                  value={searchTermRight}
+                  onChange={(e) => setSearchTermRight(e.target.value)}
+                  className="pl-10 w-full md:w-1/2 lg:w-1/3 shadow-sm"
+                />
+              </div>
+              
               {isLoadingDataRight && (
                 <div className="space-y-4">
                   <Skeleton className="h-12 w-full rounded-md" />
@@ -536,7 +583,7 @@ export default function HomePage() {
               )}
               {!isLoadingDataRight && !dataErrorRight && tableDataRight && currentTableSchemaRight && (
                 <DataDisplayTable
-                  data={tableDataRight}
+                  data={filteredTableDataRight}
                   columns={displayColsForRightTable}
                   onSelectRecord={() => { /* No edit action for right panel in this iteration */ }}
                   tableName={selectedTableNameRight}
@@ -547,16 +594,15 @@ export default function HomePage() {
         </main>
       </div>
 
-      {/* Editor - currently always targets left panel's context */}
       {isEditorOpen && editingRecord && currentTableSchema && selectedTableName && (
         <RecordEditor
           record={editingRecord}
-          tableSchema={currentTableSchema} // Uses left panel's schema
+          tableSchema={currentTableSchema} 
           isOpen={isEditorOpen}
           onClose={handleCloseEditor}
-          onSave={handleSaveRecord} // Saves to left panel's table
+          onSave={handleSaveRecord} 
           onFieldChange={handleFieldChangeInEditor}
-          tableName={selectedTableName} // Uses left panel's table name
+          tableName={selectedTableName} 
           isNewRecord={isCreatingNewRecord}
           supabaseClient={supabase} 
         />
