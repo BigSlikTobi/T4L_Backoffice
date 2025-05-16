@@ -36,7 +36,7 @@ export function AppSidebar({
         <div className="flex h-16 items-center gap-3 px-4">
           <SupabaseLogo className="h-7 w-7 text-primary" />
           <h2 className="text-lg font-semibold text-foreground">
-            Supabase Lite
+            Tackle4Loss Lite
           </h2>
         </div>
       </SidebarHeader>

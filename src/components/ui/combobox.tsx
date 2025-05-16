@@ -1,24 +1,16 @@
-
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown } from "lucide-react"
+import { Check, ChevronsUpDown, Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList, // Import CommandList
-} from "@/components/ui/command"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { Input } from "@/components/ui/input"
 
 export interface ComboboxOption {
   value: any; // Can be string, number, etc.
@@ -44,7 +36,7 @@ interface ComboboxProps {
 
 export function Combobox({
   options,
-  value: currentValue, // Renamed prop for clarity
+  value: currentValue,
   onChange,
   placeholder = "Select an option...",
   searchPlaceholder = "Search...",
@@ -56,11 +48,12 @@ export function Combobox({
   nullLabel = "-- None --",
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false)
-
+  const [searchQuery, setSearchQuery] = React.useState("")
+  
+  // Process options and handle null option if allowed
   const allOptions = React.useMemo(() => {
     let baseOptions = options;
     if (allowNull) {
-      // Ensure we don't add duplicate null placeholders if options might already contain one
       const hasNullOptionAlready = options.some(opt => opt.value === NULL_OPTION_VALUE);
       if (!hasNullOptionAlready) {
         baseOptions = [{ value: NULL_OPTION_VALUE, label: nullLabel }, ...options];
@@ -69,30 +62,51 @@ export function Combobox({
     return baseOptions;
   }, [options, allowNull, nullLabel]);
 
+  // Find the currently selected option
   const selectedOption = allOptions.find((option) => {
     if (currentValue === null && option.value === NULL_OPTION_VALUE) {
       return true;
     }
     return String(option.value) === String(currentValue);
   });
-
-  const handleItemSelect = (selectedValueFromItem: any) => {
-    // selectedValueFromItem is the original value from the option object
-    console.log(`[Combobox] handleItemSelect called with selectedValueFromItem: ${selectedValueFromItem}, type: ${typeof selectedValueFromItem}`);
-    
-    if (selectedValueFromItem === NULL_OPTION_VALUE) {
-      onChange(null);
-      console.log(`[Combobox] Calling onChange with null`);
-    } else {
-      onChange(selectedValueFromItem); // Pass the original typed value
-      console.log(`[Combobox] Calling onChange with value: ${selectedValueFromItem}`);
-    }
-    setOpen(false);
-  };
   
+  // Filter options based on search query
+  const filteredOptions = React.useMemo(() => {
+    if (!searchQuery) return allOptions;
+    return allOptions.filter(option => 
+      option.label.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [allOptions, searchQuery]);
+  
+  // Sort options alphabetically by label, keeping null option at the top if present
+  const sortedOptions = React.useMemo(() => {
+    const nullOption = filteredOptions.find(opt => opt.value === NULL_OPTION_VALUE);
+    const regularOptions = filteredOptions
+      .filter(opt => opt.value !== NULL_OPTION_VALUE)
+      .sort((a, b) => a.label.localeCompare(b.label));
+    
+    return nullOption ? [nullOption, ...regularOptions] : regularOptions;
+  }, [filteredOptions]);
+  
+  // Handle option selection
+  const handleSelect = (option: ComboboxOption) => {
+    console.log(`[Combobox] Option selected:`, option);
+    
+    if (option.value === NULL_OPTION_VALUE) {
+      onChange(null);
+    } else {
+      onChange(option.value);
+    }
+    
+    setOpen(false);
+    setSearchQuery("");
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(isOpen) => {
+      setOpen(isOpen);
+      if (!isOpen) setSearchQuery(""); // Clear search when closing
+    }}>
       <PopoverTrigger asChild>
         <Button
           variant="outline"
@@ -107,23 +121,51 @@ export function Combobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className={cn("w-[--radix-popover-trigger-width] p-0", contentClassName)}>
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} />
-          <CommandList> {/* CommandList wraps CommandEmpty and CommandGroup */}
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {allOptions.map((option) => (
-                <CommandItem
-                  // Key must be unique and string. Use placeholder for null option.
+      <PopoverContent 
+        className={cn("w-[--radix-popover-trigger-width] p-0", contentClassName)}
+        align="start"
+        style={{ zIndex: 9999 }} // Ensure highest z-index
+      >
+        <div className="flex flex-col">
+          {/* Search box */}
+          <div className="flex items-center border-b px-3">
+            <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+            <Input 
+              placeholder={searchPlaceholder}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 w-full border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
+          
+          {/* Options list */}
+          <div 
+            className="max-h-[300px] overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-gray-400"
+            style={{ 
+              overscrollBehavior: "contain",
+              WebkitOverflowScrolling: "touch"
+            }}
+            onWheel={(e) => {
+              // Prevent the wheel event from propagating to parent elements
+              e.stopPropagation();
+            }}
+          >
+            {sortedOptions.length === 0 ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                {emptyText}
+              </div>
+            ) : (
+              sortedOptions.map((option) => (
+                <div
                   key={option.value === NULL_OPTION_VALUE ? NULL_OPTION_VALUE : String(option.value)}
-                  // value for CMDK's internal filtering/selection. Must be string.
-                  value={String(option.value)} 
-                  onMouseDown={(e) => {
-                    e.preventDefault(); // Crucial to prevent blur/focus issues closing popover prematurely
-                    console.log(`[Combobox] CommandItem onMouseDown triggered for value: ${option.value} (original), label: "${option.label}"`);
-                    handleItemSelect(option.value); // Pass the original option.value (could be number, string, etc.)
-                  }}
+                  className={cn(
+                    "relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none transition-colors",
+                    (currentValue === null && option.value === NULL_OPTION_VALUE) || 
+                    (currentValue !== null && String(option.value) === String(currentValue))
+                      ? "bg-accent text-accent-foreground"
+                      : "hover:bg-muted"
+                  )}
+                  onClick={() => handleSelect(option)}
                 >
                   <Check
                     className={cn(
@@ -135,11 +177,11 @@ export function Combobox({
                     )}
                   />
                   {option.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </PopoverContent>
     </Popover>
   )
