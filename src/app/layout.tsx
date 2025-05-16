@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Supabase Admin Lite',
+  title: 'T4L BackOffce',
   description: 'A lightweight admin interface for Supabase.',
 };
 
